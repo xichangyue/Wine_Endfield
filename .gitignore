@@ -1,0 +1,10 @@
+**/local/
+**/overlay/
+**/runtime/
+**/RUNTIME-SHA256.txt
+**/OVERLAY-SHA256.txt
+.codex/
+.DS_Store
+*.zip
+*.tar.gz
+*.dSYM/
