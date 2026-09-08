@@ -6,7 +6,13 @@ trap 'echo "如遇错误，请保留终端输出；按回车关闭。"; read -r 
 check_idle
 prepare
 if [ ! -L "$WINEPREFIX/drive_c/Endfield" ]; then
-  select_path '包含 Endfield.exe 的游戏文件夹'
+  if find_installed Endfield.exe; then
+    SELECTED="$(dirname "$FOUND")"
+    echo "自动找到游戏：$SELECTED"
+  else
+    echo "首次使用请先通过“安装官方启动器.command”安装启动器并下载游戏。"
+    select_path '已下载完成、包含 Endfield.exe 的游戏文件夹'
+  fi
   [ -f "$SELECTED/Endfield.exe" ] || { echo "目录内没有 Endfield.exe"; exit 1; }
   [ ! -e "$WINEPREFIX/drive_c/Endfield" ] || { echo "C:\Endfield 已存在，请先手动检查。"; exit 1; }
   ln -s "$SELECTED" "$WINEPREFIX/drive_c/Endfield"

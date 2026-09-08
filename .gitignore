@@ -2,6 +2,7 @@
 **/overlay/
 **/runtime/
 **/RUNTIME-SHA256.txt
+**/bin/7zz
 **/OVERLAY-SHA256.txt
 .codex/
 .DS_Store

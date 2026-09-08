@@ -58,7 +58,7 @@ prepare() {
   if [ "$MODE" = DirectX11 ]; then
     cp "$WINE_ROOT/lib/wine/x86_64-windows/winemetal.dll" "$WINEPREFIX/drive_c/windows/system32/winemetal.dll"
   fi
-  "$WINE_ROOT/bin/wine" reg add 'HKCU\Software\Wine\Fonts\Replacements' /v 'Microsoft YaHei' /t REG_MULTI_SZ /d 'Heiti SC' /f
+  "$WINE_ROOT/bin/wine" reg import "$ROOT/fonts.reg"
   touch "$STATE/ready-v1"
 }
 check_idle() {
@@ -72,4 +72,29 @@ select_path() {
   IFS= read -r path
   [ -n "$path" ] || exit 1
   SELECTED="$path"
+}
+find_installed() {
+  local name="$1" item
+  local matches=()
+  if [ "$name" = Launcher.exe ] && [ -f "$WINEPREFIX/drive_c/HypergryphLauncher/Launcher.exe" ]; then
+    FOUND="$WINEPREFIX/drive_c/HypergryphLauncher/Launcher.exe"; return 0
+  fi
+  while IFS= read -r -d '' item; do matches+=("$item"); done < <(find "$WINEPREFIX/drive_c" -type f -iname "$name" -print0)
+  if [ "${#matches[@]}" = 0 ] && [ "$name" = Endfield.exe ]; then
+    local other=DirectX11
+    [ "$MODE" != DirectX11 ] || other=Vulkan
+    if [ -d "$ROOT/../$other/local/prefix/drive_c" ]; then
+      while IFS= read -r -d '' item; do matches+=("$item"); done < <(find "$ROOT/../$other/local/prefix/drive_c" -type f -iname "$name" -print0)
+    fi
+  fi
+  if [ "${#matches[@]}" = 1 ]; then FOUND="${matches[0]}"; return 0; fi
+  return 1
+}
+launcher_environment() {
+  if [ "$MODE" = DirectX11 ]; then
+    export WINEDLLOVERRIDES='d3d11,dxgi,winemetal=b'
+  else
+    export QT_OPENGL=software QT_QUICK_BACKEND=software
+    export QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu
+  fi
 }

@@ -9,4 +9,6 @@
 - **MSync**：Wine LGPL 范围内的移植代码；参考 https://github.com/marzent/wine-msync 及 https://github.com/dttdrv/wiage/commit/3f52c197d9fc9569a09d224b861e3010b397cb03 ，本项目仅选取同步相关变更适配 Wine 11.16。
 - **Endfield_FineWine**：兼容性研究参考 https://github.com/stoicswe/Endfield_FineWine ，具体 Wine 修改保留源码版权；不是游戏官方支持或账号安全承诺。
 
+- **7-Zip 26.03 for macOS**：未修改的官方通用二进制，用于读取用户自己的 NSIS 安装器。来源 https://www.7-zip.org/download.html ，许可见各模式 licenses/7zip-License.txt（LGPL、unRAR 限制及 BSD 部分）。Release 附 7z2603-src.tar.xz 对应官方完整源码。本项目没有分发鹰角安装器或替用户接受协议。
+
 独立脚本及说明使用仓库 MIT 许可。Wine 派生补丁及所构建模块不因此转为 MIT。自行再分发时同样须保留相应许可证和可取得的对应源码。
