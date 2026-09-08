@@ -7,4 +7,5 @@
 .DS_Store
 *.zip
 *.tar.gz
+*.tar.xz
 *.dSYM/

@@ -2,8 +2,8 @@
 
 两个独立管理的 macOS Apple Silicon 实验性预编译包：
 
-- `Wine_Endfield-Vulkan-v0.1.0-experimental.zip`：完整运行时，MoltenVK 1.4.2、同步提交、禁用 Metal heap，保留本机已确认流畅的配置。
-- `Wine_Endfield-DirectX11-v0.1.0-experimental.zip`：完整运行时，DXMT 0.80、双缓冲、MSync；本机反馈视角响应改善，大量技能叠加仍可能卡顿。
+- `Wine_Endfield-Vulkan-v0.1.0-experimental.tar.xz`：完整运行时，MoltenVK 1.4.2、同步提交、禁用 Metal heap，保留本机已确认流畅的配置。
+- `Wine_Endfield-DirectX11-v0.1.0-experimental.tar.xz`：完整运行时，DXMT 0.80、双缓冲、MSync；本机反馈视角响应改善，大量技能叠加仍可能卡顿。
 - `wine-11.16-source.tar.gz`：对应 Wine 原始源码；结合仓库各模式 source/wine-11.16.patch 和 BUILD.zh-CN.md 可重建修改模块。
 - `SHA256SUMS.txt`：附件 SHA-256。
 

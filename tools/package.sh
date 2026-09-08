@@ -16,8 +16,8 @@ for mode in Vulkan DirectX11; do
   cp -R "$REPO/$mode/source" "$REPO/$mode/licenses" "$REPO/$mode/runtime" "$STAGE/$mode/"
   cp "$REPO/$mode/RUNTIME-SHA256.txt" "$STAGE/$mode/"
   test ! -e "$STAGE/$mode/local"
-  target="$OUT/Wine_Endfield-$mode-$VERSION.zip"
+  target="$OUT/Wine_Endfield-$mode-$VERSION.tar.xz"
   test ! -e "$target" || { echo "输出已存在，拒绝覆盖：$target"; exit 1; }
-  (cd "$STAGE"; COPYFILE_DISABLE=1 /usr/bin/zip -q -r -y "$target" "$mode" -x '*.DS_Store')
+  COPYFILE_DISABLE=1 /usr/bin/tar -cJf "$target" -C "$STAGE" "$mode"
 done
 echo "完整运行时包已生成；发布前还需源码附件与 SHA256SUMS。"

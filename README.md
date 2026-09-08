@@ -27,7 +27,7 @@ arm mac的《明日方舟：终末地》兼容层
 
 ### 直接使用预编译 Release
 
-1. 下载对应的 `Wine_Endfield-Vulkan-*.zip` 或 `Wine_Endfield-DirectX11-*.zip` 并解压到自己的可写目录。两个文件夹分别管理，不要改名；也不要合并两套 runtime 或 local 目录。
+1. 下载对应的 `Wine_Endfield-Vulkan-*.tar.xz` 或 `Wine_Endfield-DirectX11-*.tar.xz`，用 macOS 归档实用工具解压到自己的可写目录。两个文件夹分别管理，不要改名；也不要合并两套 runtime 或 local 目录。
 2. 需要 Apple Silicon Mac 与 Rosetta 2。如系统提示安装 Rosetta，按 Apple 提示安装。包内已包含编译好的 Wine 及图形组件，正常使用无需安装编译器或再次下载 Wine。
 3. 自行通过官方渠道安装/准备 Windows PC 版游戏。双击目录中的 **启动游戏.command**；首次会校验运行时并创建全新的 Wine 用户目录，请耐心等待。
 4. 在终端提示中粘贴**包含 Endfield.exe 的游戏目录绝对路径**。不要加引号，不要把空格写成反斜杠转义。中文及空格路径可以使用。该路径会映射为 `C:\Endfield`。
