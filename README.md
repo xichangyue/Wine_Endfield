@@ -16,6 +16,8 @@ arm mac的《明日方舟：终末地》兼容层
 
 ## 下载与启动（简体中文）
 
+推荐新用户下载 [v0.2.0-preview 统一安装器](https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.2.0-preview)：选择官方安装器 EXE、安装位置及一种或两种渲染方式，自动配置共享游戏目录、独立更新环境和桌面应用入口。它只完成环境安装，游戏下载及校验仍在官方启动器中进行。使用和构建说明见 [统一安装器说明](installer/README.zh-CN.md)。原 v0.1.0 分包继续保留，以下分包流程仍适用。
+
 优先下载本仓库 **Releases** 中的预编译安装包，不要把 GitHub 自动生成的 Source code ZIP 当成安装包。
 
 | 安装包目录 | 渲染路径 | 当前实测情况 |
