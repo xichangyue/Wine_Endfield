@@ -1,0 +1,253 @@
+{
+  "schema": 1,
+  "release": "v0.3.0-preview",
+  "description": "Complete modified source with fixed upstream dependencies; no compiler outputs, Git metadata, game, Wine prefix, private fonts or user data.",
+  "components": [
+    {
+      "path": ".",
+      "repository": "https://github.com/KhronosGroup/MoltenVK",
+      "commit": "db66022459ffb663aa2b50f6b018bc2e124f5edf",
+      "source_files": 280
+    },
+    {
+      "path": "External/SPIRV-Cross",
+      "repository": "https://github.com/KhronosGroup/SPIRV-Cross",
+      "commit": "6c09849fe88c48eaed08413aa022aaa136a3a057",
+      "source_files": 4772
+    },
+    {
+      "path": "External/SPIRV-Tools",
+      "repository": "https://github.com/KhronosGroup/SPIRV-Tools",
+      "commit": "0d6fd73ca73830ccab5fa1f00ed5ed40124e2c55",
+      "source_files": 1743
+    },
+    {
+      "path": "External/SPIRV-Tools/external/spirv-headers",
+      "repository": "https://github.com/KhronosGroup/SPIRV-Headers",
+      "commit": "29981f65241605e08b0ede4cfeb999fe3b723c6a",
+      "source_files": 120
+    },
+    {
+      "path": "External/Vulkan-Headers",
+      "repository": "https://github.com/KhronosGroup/Vulkan-Headers",
+      "commit": "e3b1eec08173d6b825cd3ac88c885a63b621504a",
+      "source_files": 89
+    },
+    {
+      "path": "External/Vulkan-Tools",
+      "repository": "https://github.com/KhronosGroup/Vulkan-Tools",
+      "commit": "8c66b352925cb771f793a4d3220b1321ae0febf1",
+      "source_files": 133
+    },
+    {
+      "path": "External/Volk",
+      "repository": "https://github.com/zeux/volk",
+      "commit": "776893306c5d3b22b6185b5d4a258b81d94572bf",
+      "source_files": 21
+    },
+    {
+      "path": "External/cereal",
+      "repository": "https://github.com/USCiLab/cereal",
+      "commit": "a56bad8bbb770ee266e930c95d37fff2a5be7fea",
+      "source_files": 210
+    }
+  ],
+  "source_files": 7358,
+  "symlinks": {
+    "Demos/Cube/include/cube": "../../../External/Vulkan-Tools/cube",
+    "Demos/Cube/include/volk": "../../../External/Volk",
+    "MoltenVK/include/MoltenVK": "../MoltenVK/API",
+    "MoltenVK/include/vk_video": "../../External/Vulkan-Headers/include/vk_video",
+    "MoltenVK/include/vulkan": "../../External/Vulkan-Headers/include/vulkan",
+    "MoltenVKShaderConverter/SPIRV-Cross": "../External/SPIRV-Cross",
+    "MoltenVKShaderConverter/SPIRV-Tools": "../External/SPIRV-Tools",
+    "MoltenVKShaderConverter/Tools": "../Package/Latest/MoltenVKShaderConverter/Tools",
+    "MoltenVKShaderConverter/include/MoltenVKShaderConverter/SPIRVConversion.h": "../../MoltenVKShaderConverter/SPIRVConversion.h",
+    "MoltenVKShaderConverter/include/MoltenVKShaderConverter/SPIRVToMSLConverter.h": "../../MoltenVKShaderConverter/SPIRVToMSLConverter.h"
+  },
+  "modified_sources_frozen_matches": [
+    {
+      "path": "MoltenVK/MoltenVK/Commands/MVKCmdDispatch.mm",
+      "sha256": "95c90e87ba57c85185eca40da4935382fd1e001a8c90509c55305133039bf6dd",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Commands/MVKCmdTransfer.mm",
+      "sha256": "3cad080ae40f81f079208a5e9854a1653392d7b4ca60ed5067337e85ab9deb43",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm",
+      "sha256": "458efc98b047354b1483150a5f0222d289ceec5183dbd971146f5a15db158dc5",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.h",
+      "sha256": "5b81c9d256eabc900dda7262a8c3d3fa0e0413d17798162f9a081318acb5fafc",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Commands/MVKCommandEncoderState.mm",
+      "sha256": "a2707057dabd8874684b049bf14f65b64b1e4a935ff7cd222789c59a3969fd45",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKDevice.h",
+      "sha256": "c6e6a8867f72125052d28d6e85f6795a97dedd455814e6a647904c99a92e24f1",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm",
+      "sha256": "c03fbba517ca122180eb24455f162671aaad30b8ee5546a7f338c74dcd2fd167",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKDeviceMemory.mm",
+      "sha256": "9bb96e7e9576c93a5516d2e39efa14a6d1e3597b2fcbfac9f6da4eabf340c6b0",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKImage.h",
+      "sha256": "83ba6822764c0a68dc8f210fba12b3dc9703648b80664cda1ea2fe1e79ad7605",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKImage.mm",
+      "sha256": "e78e076ee6911db5d40ac2966f6c4a9c7def3e0b656bcecc5dd193c285aaa621",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKPipeline.h",
+      "sha256": "765fd5aef205652a4fb6d34ec8199b35094be69c1e5127fb0620163c6d0fa264",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm",
+      "sha256": "cd5e54b2bc4fffc8f9e13fe3a217ad5fa8c36eac3b5452f3571a203dc7c77c7f",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm",
+      "sha256": "2adc0802ec663dc164f9338de67efe682a2d9387b5ad631fd4eb84e0c3f82902",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h",
+      "sha256": "6df01f6da22a0da2a4bf9759f48032b26a03f934156f32cea5a7cbc375f13bfb",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm",
+      "sha256": "7290c2d31c688a018157feb26a20e5c6231c27ce47fbe766a303bcac7d0c0b47",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.h",
+      "sha256": "d358222d377cc05161e8e4a864a5aa18186d405c8e984023b0d7100e58e8e9d7",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKSwapchain.mm",
+      "sha256": "11e6aa63f8f3f33534459e5484608590016e6f720e1594297d5878e6112e22c8",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/GPUObjects/MVKSync.mm",
+      "sha256": "940a4efc6a5956fdabb643b08f944d0e394ee566530782f5be8966f87cafb0a1",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKBaseObject.h",
+      "sha256": "6a90da1d6299cf355a93e3a026e1f8a1f259ddb2a0ef37ddb8c6545d0fd8492b",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKWatermark.mm",
+      "sha256": "0171b0c0b43bd152b1e9c588261f9d7e6fc3b4f71723aaa65c78eb4621fb878b",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Vulkan/vulkan.mm",
+      "sha256": "35b664772c12c08a27ddd0491f59acadc01afee850877fd7146411d302e8af3b",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKEndfieldCompileTiming.h",
+      "sha256": "667451adf9dd2a0498d9efba88eb526d10d31e5541b026727ac82bcd05e4ce73",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKEndfieldEncoderLabels.h",
+      "sha256": "1e66e4b9a91c616e2e8b355485bcd307719e1a668e6d920e9b2db2ff73350470",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKEndfieldFaultBreadcrumbs.h",
+      "sha256": "a446d9d0c6182145b143e3c46b6a62165abdc38711400a1cac80691b86911d49",
+      "frozen_record": "2026-09-19"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKEndfieldFrameTiming.h",
+      "sha256": "bb00e006c3cda5f110cb4036f022d0a7cd8b6e61d58103bce67e9d0436254c08",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKEndfieldLibraryPrewarm.h",
+      "sha256": "2db4e75c5cdf81e1902b865c99f8e18d86b6a9369a45345b75d6c7d4ee078b8c",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKEndfieldTargetResource.h",
+      "sha256": "dd1ba962e1746fa84a30b1064c840b764ff0162633d81478f72ded14ffa990b8",
+      "frozen_record": "2026-09-18"
+    },
+    {
+      "path": "MoltenVK/MoltenVK/Utility/MVKEndfieldTargetUBO.h",
+      "sha256": "db9731771ed6394d9788341548876b2a8b5b9cbe6d7d91bf573e4603aa4661aa",
+      "frozen_record": "2026-09-18"
+    }
+  ],
+  "source_build_binary_provenance": {
+    "existing_binary_sha256": "1cf987832fc970cd1ed842fadc3a68796c39d4c173209e6a1eee9b04ca8e554d",
+    "build_date": "2026-09-19",
+    "source_freeze_record_sha256": "29114e1800762291b1d710f94b5427f8d98987b3db11034985187a5804f8845d",
+    "all_modified_main_files_match_historical_freezes": true,
+    "recompiled_for_this_release": false,
+    "bit_identical_rebuild_claim": false
+  },
+  "wine": {
+    "baseline_archive": "wine-11.16-source.tar.gz",
+    "baseline_sha256": "2b6d5cff784cb774f7f17b9a640b123ca8361d89c4280c0021b70bb6f3cd1b1c",
+    "vulkan_patch_sha256": "1a7694087bdffda88ec5a506201d503c6687410be361709df4510f58e8735279",
+    "dx11_patch_unchanged_sha256": "fbae1829a5b732c4bbbbe32c16f2f88a103945f431a06e875cdad728c0b195b6",
+    "modified_source_sha256": {
+      "dlls/ntdll/Makefile.in": "db3aea8427b1b4a718056b1efb4385ecad078e25dc62d1c9b909cbe43bce3508",
+      "dlls/ntdll/unix/loader.c": "9497dcc2021748fdb0fe46bcabd9522bd918252f1b08e9f34d2be3efe9880028",
+      "dlls/ntdll/unix/msync.c": "19bf197b9b089653c818792b3aaea7add57f27a0e2c0f3cf8dfb64e629de64e5",
+      "dlls/ntdll/unix/msync.h": "82b8d07b239ef764369d3288e5dde899174f6142b8781c53a7200badf59aa642",
+      "dlls/ntdll/unix/sync.c": "1ce50801d3592db45be08c82d0c3ff0fe36131b85af787f64100981e9bbd0394",
+      "dlls/ntdll/unix/signal_x86_64.c": "6f03dd575d7fffad7b78473c55463f43dbde3cabf71082d663a83c5ae3701c7f",
+      "dlls/ntdll/unix/server.c": "1bdf41a08181ac97c966d12bb49948c7d05413644bc18c79c004ff589e5a88e0",
+      "dlls/ntdll/unix/thread.c": "d367832c230b8864259ef9364e44a9b40c90db7a7ac0a97fc7e9031b82ea86c9",
+      "dlls/ntoskrnl.exe/ntoskrnl.c": "7e29e81f7a403ad2c0c7a5db455d5e08d4aedab23c162b652427285d3a3deddb",
+      "dlls/ntoskrnl.exe/ntoskrnl_private.h": "a32e5e0acffe15e4eddcd559ba689caee10776f2795bafe5ba009c624a342602",
+      "dlls/ntoskrnl.exe/ntoskrnl.exe.spec": "957726b685b0dd8582e91a28cf82f9fc18602e68d408784b9108b4506d5350a7",
+      "dlls/kernel32/module.c": "9f33f04195f554c6bd185df4bdff011f2cb62307f37c5fe7503a6b3a1aaee052",
+      "server/token.c": "d57dbd950470f9d1c291e53b57ca35e70bc3e5e7f0eb86821e5c69cd6d6b55d9",
+      "server/Makefile.in": "4e6ebeb5141525c3ded82f577ea2173d69c118ae452157bf7fb183105002aca8",
+      "server/inproc_sync.c": "4b8aff662b109e987ab4b538106223c89bd725f2da380863602905828b8b3d89",
+      "server/main.c": "e0ebac36730e92ee0f6ecae4c69a04bb56434739149cd13253f37db9d995bbd2",
+      "server/msync.c": "38003a4e70d68f0a6d168f252e0d3ed43aa18106ab77bd69cf1bc8449ce86d42",
+      "server/msync.h": "9ba0838d6c801a908f846bd0e324ac65db8d0fc628cebc2b8fa204534c8b0d6d",
+      "server/protocol.def": "917bea0e700c2165d03c5315155497e8e25dfc0be478a53c03441b067dde0fb0",
+      "server/thread.c": "1715d9068d24a5be95ea7bef0a7a43aaab167923fcf9ee2183b93f36f4fab7d2",
+      "include/wine/server_protocol.h": "756ad7aa92569e21e8d27b11b3508248afc13e91e49f0636ecd8cf42f6bf7af3",
+      "server/request_handlers.h": "815e458c31a593c8e0f769ca65cd718d4584df61b240c7abd887dbfb05e8dd2d",
+      "server/request_trace.h": "31c44adbb8bc235c7a58f0632f70f85c82f010673b7507e204ae945e7bbf8405"
+    }
+  },
+  "patch_sha256": {
+    "moltenvk-1.4.2-endfield.patch": "e4f363ce09e10f342f316148cd694b6685d92c7b68a4b0df860f7e032e4a1bf2",
+    "spirv-cross-device-barrier.patch": "01c9a7617b642d03c6c371e13b700de61a2bb7443950a6dc620786ec9e61d48e"
+  }
+}

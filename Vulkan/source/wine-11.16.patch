@@ -28,7 +28,7 @@
      init_files();
 --- a/dlls/ntdll/unix/msync.c
 +++ b/dlls/ntdll/unix/msync.c
-@@ -0,0 +1,1163 @@
+@@ -0,0 +1,1154 @@
 +/*
 + * mach semaphore-based synchronization objects
 + *
@@ -406,19 +406,10 @@
 +
 +    while (__atomic_load_n( addr, __ATOMIC_ACQUIRE ) == 2)
 +    {
-+        if (check_shm_contention( objs_shm, alert_obj_shm, count, tid ))
-+        {
-+            int i;
-+            for (i = 0; i < count; i++)
-+            {
-+                struct event *obj = (struct event *)objs_shm[i];
-+
-+                int refs = __atomic_sub_fetch( &obj->multiple_waiters, 1, __ATOMIC_SEQ_CST);
-+                if (refs < 0)
-+                    __atomic_store_n( &obj->multiple_waiters, 0, __ATOMIC_SEQ_CST);
-+            }
-+            return STATUS_PENDING;
-+        }
++        /* A later wait reuses addr. Do not return before this registration
++         * is acknowledged, or its delayed acknowledgement can overwrite the
++         * next wait's state. Always pair registration with remove below. */
++        sched_yield();
 +    }
 +
 +    do
@@ -1254,7 +1245,7 @@
  
  WINE_DEFAULT_DEBUG_CHANNEL(sync);
  
-@@ -447,6 +448,54 @@
+@@ -447,8 +448,56 @@
      if (errno == EOWNERDEAD) return STATUS_ABANDONED + (type != WaitAll ? args.index : 0);
      if (errno == ETIMEDOUT) return STATUS_TIMEOUT;
      return errno_to_status( errno );
@@ -1285,8 +1276,8 @@
 +static NTSTATUS linux_pulse_event_obj( int obj, LONG *prev_state )
 +{
 +    return msync_pulse_event_obj( obj, prev_state );
-+}
-+
+ }
+ 
 +static NTSTATUS linux_query_event_obj( int obj, EVENT_BASIC_INFORMATION *info )
 +{
 +    return msync_query_event_obj( obj, info );
@@ -1306,9 +1297,11 @@
 +                                 int alert_fd, const LARGE_INTEGER *timeout )
 +{
 +    return msync_wait_objs( count, objs, type != WaitAll, alert_fd, timeout );
- }
- 
++}
++
  #else /* NTSYNC_IOC_EVENT_READ */
+ 
+ static NTSTATUS linux_release_semaphore_obj( int obj, ULONG count, ULONG *prev_count )
 @@ -634,7 +683,13 @@
      LONG ref = InterlockedDecrement( &sync->refcount );
  
@@ -1360,11 +1353,128 @@
              }
          }
          SERVER_END_REQ;
-@@ -2433,6 +2502,25 @@
-     if (!timeout || timeout->QuadPart == TIMEOUT_INFINITE)  /* sleep forever */
+@@ -2413,6 +2482,110 @@
+ }
+ 
+ 
++#ifdef __APPLE__
++/* XNU rejects select timeouts above 100000000 seconds.  Keep the original
++ * finite deadline and sleep in accepted chunks instead of retrying EINVAL.
++ * This isolated candidate is opt-in; alertable, zero and infinite waits keep
++ * their existing paths. */
++static void endfield_log_delay_chunk( LONGLONG timeout, ULONGLONG remaining,
++                                     const struct timeval *tv, int error )
++{
++    static LONG records, errors;
++    LONG *counter = error ? &errors : &records;
++    LONG limit = error ? 8 : 32, count;
++    uint64_t native_tid = 0;
++    const char *diagnostic = getenv( "ENDFIELD_DELAY_DIAGNOSTICS" );
++    if (!diagnostic || strcmp( diagnostic, "1" )) return;
++    for (;;)
++    {
++        count = InterlockedCompareExchange( counter, 0, 0 );
++        if (count >= limit) return;
++        if (InterlockedCompareExchange( counter, count + 1, count ) == count) break;
++    }
++    pthread_threadid_np( NULL, &native_tid );
++    fprintf( stderr, "ENDFIELD_DELAY pid=%lu win_tid=%lu native_tid=%llu kind=%s timeout=%lld remaining_ticks=%llu "
++             "selected_sec=%lld selected_usec=%ld errno=%d\n",
++             (unsigned long)getpid(), (unsigned long)GetCurrentThreadId(), (unsigned long long)native_tid,
++             timeout < 0 ? "relative" : "absolute", (long long)timeout,
++             (unsigned long long)remaining, (long long)tv->tv_sec, (long)tv->tv_usec, error );
++}
++
++static NTSTATUS endfield_darwin_delay_finite( LONGLONG timeout )
++{
++    const ULONGLONG max_usec = 100000000ULL * 1000000;
++    ULONGLONG start = 0, duration = 0, remaining, usec;
++    LARGE_INTEGER now;
++    BOOL reported = FALSE, chunked;
++
++    if (timeout < 0)
++    {
++        /* Unsigned subtraction also represents the magnitude of INT64_MIN. */
++        duration = 0 - (ULONGLONG)timeout;
++        NtQueryPerformanceCounter( &now, NULL );
++        start = now.QuadPart;
++    }
++    NtYieldExecution();
++    for (;;)
++    {
++        struct timeval tv;
++        int ret, error;
++        if (timeout < 0)
++        {
++            ULONGLONG elapsed;
++            NtQueryPerformanceCounter( &now, NULL );
++            elapsed = (ULONGLONG)now.QuadPart - start;
++            if (elapsed >= duration) return STATUS_SUCCESS;
++            remaining = duration - elapsed;
++        }
++        else
++        {
++            NtQuerySystemTime( &now );
++            if (now.QuadPart >= timeout) return STATUS_SUCCESS;
++            remaining = (ULONGLONG)timeout - (ULONGLONG)now.QuadPart;
++        }
++        usec = remaining / 10 + !!(remaining % 10);
++        chunked = usec > max_usec;
++        if (chunked) usec = max_usec;
++        tv.tv_sec = usec / 1000000;
++        tv.tv_usec = usec % 1000000;
++        if (chunked && !reported)
++        {
++            endfield_log_delay_chunk( timeout, remaining, &tv, 0 );
++            reported = TRUE;
++        }
++        ret = select( 0, NULL, NULL, NULL, &tv );
++        if (ret != -1)
++        {
++            if (!chunked) return STATUS_SUCCESS;
++            continue;
++        }
++        error = errno;
++        if (error == EINTR) continue;
++        endfield_log_delay_chunk( timeout, remaining, &tv, error );
++        return errno_to_status( error );
++    }
++}
++
++static BOOL endfield_darwin_delay_enabled(void)
++{
++    const char *setting = getenv( "ENDFIELD_DARWIN_DELAY_CHUNKS" );
++    return setting && !strcmp( setting, "1" );
++}
++
++static BOOL endfield_darwin_long_delay_only_enabled( LONGLONG timeout )
++{
++    const ULONGLONG max_ticks = 100000000ULL * 10000000ULL;
++    const char *setting;
++
++    /* Inspect the input before any environment lookup. Ordinary waits keep
++     * their existing clocks and logic; unsigned magnitude handles INT64_MIN.
++     * This is a conservative chunk limit, not the exact select EINVAL edge. */
++    if (timeout >= 0 || 0 - (ULONGLONG)timeout <= max_ticks) return FALSE;
++    setting = getenv( "ENDFIELD_DARWIN_LONG_DELAY_ONLY" );
++    return setting && !strcmp( setting, "1" );
++}
++#endif
++
+ /******************************************************************
+  *		NtDelayExecution (NTDLL.@)
+  */
+@@ -2434,6 +2607,32 @@
      {
          for (;;) select( 0, NULL, NULL, NULL, NULL );
+     }
++#ifdef __APPLE__
++    else if (timeout->QuadPart && (endfield_darwin_delay_enabled() ||
++                                  endfield_darwin_long_delay_only_enabled( timeout->QuadPart )))
++    {
++        return endfield_darwin_delay_finite( timeout->QuadPart );
 +    }
++#endif
 +    else if (timeout->QuadPart < 0)
 +    {
 +        /* dw-proton / FineWine: relative delays use the monotonic QPC clock. */
@@ -1383,9 +1493,10 @@
 +            tv.tv_usec = diff % 1000000;
 +            if (select( 0, NULL, NULL, NULL, &tv ) != -1) break;
 +        }
-     }
++    }
      else
      {
+         LARGE_INTEGER now;
 --- a/dlls/ntdll/unix/signal_x86_64.c
 +++ b/dlls/ntdll/unix/signal_x86_64.c
 @@ -2088,6 +2088,15 @@
@@ -1454,7 +1565,280 @@
  
 --- a/dlls/ntdll/unix/server.c
 +++ b/dlls/ntdll/unix/server.c
-@@ -243,7 +243,8 @@
+@@ -42,6 +42,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <time.h>
+ #include <sys/types.h>
+ #include <sys/mman.h>
+ #include <sys/socket.h>
+@@ -65,6 +66,7 @@
+ #include <unistd.h>
+ #ifdef __APPLE__
+ #include <crt_externs.h>
++#include <execinfo.h>
+ #include <spawn.h>
+ #ifndef _POSIX_SPAWN_DISABLE_ASLR
+ #define _POSIX_SPAWN_DISABLE_ASLR 0x0100
+@@ -105,6 +107,200 @@
+ static pid_t server_pid;
+ pthread_mutex_t fd_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
++/* BEGIN ENDFIELD_SERVER_FD_DIAGNOSTICS
++ * Fault-only observations, never recovery. Initialized before server IPC starts.
++ * Keep this helper free of stdio, allocation, fd ownership changes and locks:
++ * wait_select_reply() can also be reached from the suspend signal handler.
++ */
++static int endfield_server_fd_diagnostics;
++static LONG endfield_server_fd_reports;
++
++struct endfield_fd_line
++{
++    char text[4096];
++    size_t length;
++    int overflow;
++};
++
++static void endfield_fd_text( struct endfield_fd_line *line, const char *text )
++{
++    while (*text)
++    {
++        if (line->length == sizeof(line->text))
++        {
++            line->overflow = 1;
++            return;
++        }
++        line->text[line->length++] = *text++;
++    }
++}
++
++static void endfield_fd_uint( struct endfield_fd_line *line, ULONGLONG value )
++{
++    char digits[20];
++    unsigned int count = 0;
++
++    do
++    {
++        digits[count++] = '0' + value % 10;
++        value /= 10;
++    } while (value);
++    while (count)
++    {
++        char digit[2] = { digits[--count], 0 };
++        endfield_fd_text( line, digit );
++    }
++}
++
++static void endfield_fd_int( struct endfield_fd_line *line, LONGLONG value )
++{
++    if (value < 0) endfield_fd_text( line, "-" );
++    endfield_fd_uint( line, value < 0 ? 0 - (ULONGLONG)value : (ULONGLONG)value );
++}
++
++static void endfield_fd_key( struct endfield_fd_line *line, const char *key, ULONGLONG value )
++{
++    endfield_fd_text( line, ",\"" );
++    endfield_fd_text( line, key );
++    endfield_fd_text( line, "\":" );
++    endfield_fd_uint( line, value );
++}
++
++/* These properties are observed after failure, not an atomic fd identity at the
++ * failed syscall. Another thread can close/reuse the number between queries. */
++static void endfield_fd_state( struct endfield_fd_line *line, const char *role, int fd )
++{
++    struct stat st;
++    int descriptor_flags, descriptor_errno, status_flags, status_errno, stat_result, stat_errno;
++
++    descriptor_flags = fcntl( fd, F_GETFD );
++    descriptor_errno = descriptor_flags < 0 ? errno : 0;
++    status_flags = fcntl( fd, F_GETFL );
++    status_errno = status_flags < 0 ? errno : 0;
++    stat_result = fstat( fd, &st );
++    stat_errno = stat_result < 0 ? errno : 0;
++
++    endfield_fd_text( line, "{\"role\":\"" );
++    endfield_fd_text( line, role );
++    endfield_fd_text( line, "\",\"fd\":" );
++    endfield_fd_int( line, fd );
++    endfield_fd_text( line, ",\"getfd\":" );
++    endfield_fd_int( line, descriptor_flags );
++    endfield_fd_key( line, "getfd_errno", descriptor_errno );
++    endfield_fd_text( line, ",\"getfl\":" );
++    endfield_fd_int( line, status_flags );
++    endfield_fd_key( line, "getfl_errno", status_errno );
++    endfield_fd_text( line, ",\"fstat\":" );
++    endfield_fd_int( line, stat_result );
++    endfield_fd_key( line, "fstat_errno", stat_errno );
++    if (!stat_result)
++    {
++        endfield_fd_key( line, "mode", st.st_mode );
++        endfield_fd_key( line, "dev", st.st_dev );
++        endfield_fd_key( line, "ino", st.st_ino );
++    }
++    endfield_fd_text( line, "}" );
++}
++
++/* req and data are the caller's still-live request/thread objects, or NULL.
++ * cookie, wait_array and data->teb are opaque addresses, never dereferenced.
++ * saved_errno is the value immediately after the failed syscall; for a short
++ * nonnegative result it is preserved but is not reported as the fault cause. */
++static void endfield_server_fd_failure( const char *phase, int saved_errno, int actual_fd,
++                                       long syscall_result, const struct __server_request_info *req,
++                                       const void *cookie, const int *wait_array,
++                                       const struct thread_data *data )
++{
++    struct endfield_fd_line line;
++    struct timespec timestamp;
++    ULONGLONG native_tid = 0;
++    const char *native_tid_status = "unobserved";
++    LONG sequence;
++    int request_fd = -1, reply_fd = -1, wait_read_fd = -1, wait_write_fd = -1, alert_fd = -1;
++
++    if (!endfield_server_fd_diagnostics) return;
++    if (InterlockedCompareExchange( &endfield_server_fd_reports, 0, 0 ) >= 16) return;
++    sequence = InterlockedIncrement( &endfield_server_fd_reports );
++    if (sequence > 16) return;
++
++    line.length = 0;
++    line.overflow = 0;
++    endfield_fd_text( &line, "{\"type\":\"endfield_server_fd_failure\",\"version\":1,\"phase\":\"" );
++    endfield_fd_text( &line, phase );
++    endfield_fd_text( &line, "\"" );
++    endfield_fd_key( &line, "sequence", sequence );
++    endfield_fd_key( &line, "pid", getpid() );
++#if defined(__linux__) && defined(__NR_gettid)
++    {
++        long result = syscall( __NR_gettid );
++        native_tid_status = result > 0 ? "observed" : "query_failed";
++        if (result > 0) native_tid = result;
++    }
++#endif
++    /* Darwin has no native-id query here: avoid deprecated syscall() and
++     * additional pthread/Mach work in a possible suspend signal context. */
++    endfield_fd_key( &line, "native_tid", native_tid );
++    endfield_fd_text( &line, ",\"native_tid_status\":\"" );
++    endfield_fd_text( &line, native_tid_status );
++    endfield_fd_text( &line, "\"" );
++#if defined(__APPLE__) && defined(CLOCK_MONOTONIC_RAW)
++    endfield_fd_text( &line, ",\"clock\":\"CLOCK_MONOTONIC_RAW\"" );
++    if (!clock_gettime( CLOCK_MONOTONIC_RAW, &timestamp ))
++#else
++    endfield_fd_text( &line, ",\"clock\":\"CLOCK_MONOTONIC\"" );
++    if (!clock_gettime( CLOCK_MONOTONIC, &timestamp ))
++#endif
++    {
++        endfield_fd_key( &line, "clock_s", timestamp.tv_sec );
++        endfield_fd_key( &line, "clock_ns", timestamp.tv_nsec );
++    }
++    endfield_fd_key( &line, "thread_data", (UINT_PTR)data );
++    endfield_fd_key( &line, "cookie", (UINT_PTR)cookie );
++    endfield_fd_key( &line, "wait_array", (UINT_PTR)wait_array );
++    endfield_fd_key( &line, "request_ptr", (UINT_PTR)req );
++    endfield_fd_key( &line, "fault_errno", syscall_result < 0 ? saved_errno : 0 );
++    endfield_fd_text( &line, ",\"syscall_result\":" );
++    endfield_fd_int( &line, syscall_result );
++    if (req)
++    {
++        endfield_fd_key( &line, "post_failure_request", req->u.req.request_header.req );
++        endfield_fd_key( &line, "post_failure_request_size", req->u.req.request_header.request_size );
++        endfield_fd_key( &line, "post_failure_reply_capacity", req->u.req.request_header.reply_size );
++    }
++    if (data)
++    {
++        /* Copy slots once; do not mistake this table snapshot for actual_fd. */
++        request_fd = data->request_fd;
++        reply_fd = data->reply_fd;
++        wait_read_fd = data->wait_fd[0];
++        wait_write_fd = data->wait_fd[1];
++        alert_fd = data->alert_fd;
++        endfield_fd_key( &line, "thread_data_teb", (UINT_PTR)data->teb );
++        endfield_fd_key( &line, "thread_data_tid", data->tid );
++        endfield_fd_key( &line, "thread_data_pthread", (UINT_PTR)data->pthread_id );
++    }
++    endfield_fd_text( &line, ",\"fd_observation\":\"post_failure_nonatomic\",\"fds\":[" );
++    endfield_fd_state( &line, "actual", actual_fd );
++    if (data)
++    {
++        endfield_fd_text( &line, "," );
++        endfield_fd_state( &line, "request_slot", request_fd );
++        endfield_fd_text( &line, "," );
++        endfield_fd_state( &line, "reply_slot", reply_fd );
++        endfield_fd_text( &line, "," );
++        endfield_fd_state( &line, "wait_read_slot", wait_read_fd );
++        endfield_fd_text( &line, "," );
++        endfield_fd_state( &line, "wait_write_slot", wait_write_fd );
++        endfield_fd_text( &line, "," );
++        endfield_fd_state( &line, "alert_slot", alert_fd );
++    }
++    endfield_fd_text( &line, "]}\n" );
++    /* One best-effort write, no retry or stdio lock, including EINTR/partial. */
++    if (!line.overflow) (void)write( STDERR_FILENO, line.text, line.length );
++    errno = saved_errno;
++}
++/* END ENDFIELD_SERVER_FD_DIAGNOSTICS */
++
+ /* atomically exchange a 64-bit value */
+ static inline LONG64 interlocked_xchg64( LONG64 *dest, LONG64 val )
+ {
+@@ -179,8 +375,13 @@
+  *
+  * Send a request to the server.
+  */
+-static unsigned int send_request( int request_fd, const struct __server_request_info *req )
++static unsigned int send_request( int request_fd, const struct __server_request_info *req,
++                                  const struct thread_data *data )
+ {
++    int saved_errno;
++    ssize_t failure_result;
++    const char *failure_phase;
++
+     if (!req->u.req.request_header.request_size)
+     {
+         data_size_t to_write = sizeof(req->u.req);
+@@ -190,7 +391,13 @@
+         {
+             ssize_t ret = write( request_fd, write_ptr, to_write );
+             if (ret == to_write) return STATUS_SUCCESS;
+-            if (ret < 0) break;
++            if (ret < 0)
++            {
++                saved_errno = errno;
++                failure_result = ret;
++                failure_phase = "request_write";
++                break;
++            }
+             to_write -= ret;
+             write_ptr += ret;
+         }
+@@ -213,7 +420,13 @@
+         {
+             ssize_t ret = writev( request_fd, vec, i + 1 );
+             if (ret == to_write) return STATUS_SUCCESS;
+-            if (ret < 0) break;
++            if (ret < 0)
++            {
++                saved_errno = errno;
++                failure_result = ret;
++                failure_phase = "request_writev";
++                break;
++            }
+             to_write -= ret;
+             for (j = 0; j < i + 1; j++)
+             {
+@@ -232,6 +445,10 @@
+         }
+     }
+ 
++    if (endfield_server_fd_diagnostics)
++        endfield_server_fd_failure( failure_phase, saved_errno, request_fd, failure_result, req,
++                                    NULL, NULL, data );
++    errno = saved_errno;
+     if (errno == EPIPE) abort_thread(0);
+     if (errno == EFAULT) return STATUS_ACCESS_VIOLATION;
+     server_protocol_perror( "write" );
+@@ -243,7 +460,8 @@
   *
   * Read data from the reply buffer; helper for wait_reply.
   */
@@ -1464,7 +1848,7 @@
  {
      int ret;
  
-@@ -258,7 +259,13 @@
+@@ -258,7 +476,13 @@
          if (!ret) break;
          if (errno == EINTR) continue;
          if (errno == EPIPE) break;
@@ -1479,8 +1863,47 @@
      }
      /* the server closed the connection; time to die... */
      abort_thread(0);
-@@ -272,9 +279,12 @@
+@@ -270,11 +494,51 @@
+  *
+  * Wait for a reply from the server.
   */
++/* Local diagnostics: keep the pipe header separate from caller-owned memory.
++ * Never clamp a malformed reply or pretend that its request succeeded. */
++static unsigned int wait_reply_checked( int reply_fd, struct __server_request_info *req )
++{
++    union generic_reply wire_reply;
++    unsigned int request = req->u.req.request_header.req;
++    size_t capacity = req->u.req.request_header.reply_size;
++    void *payload = capacity ? req->reply_data : NULL;
++    const char *reason = NULL;
++
++    read_reply_data( reply_fd, &wire_reply, sizeof(wire_reply), request, "wire-header", sizeof(wire_reply) );
++    if (wire_reply.reply_header.reply_size > capacity) reason = "wire-size-exceeds-capacity";
++    else if (req->u.req.request_header.req != request ||
++             req->u.req.request_header.reply_size != capacity ||
++             (capacity && req->reply_data != payload)) reason = "request-metadata-changed";
++    if (reason)
++    {
++#ifdef __APPLE__
++        void *frames[32];
++        int count;
++#endif
++        fprintf( stderr, "ENDFIELD-LAB reply-integrity tid=%x reason=%s request=%u current_request=%u fd=%d req=%p wire_status=%08x wire_size=%u capacity=%zu current_capacity=%u\n",
++                 GetCurrentThreadId(), reason, request, req->u.req.request_header.req, reply_fd, req,
++                 wire_reply.reply_header.error, wire_reply.reply_header.reply_size,
++                 capacity, req->u.req.request_header.reply_size );
++#ifdef __APPLE__
++        count = backtrace( frames, 32 );
++        backtrace_symbols_fd( frames, count, STDERR_FILENO );
++#endif
++        server_protocol_error( "invalid reply metadata; refusing payload read\n" );
++    }
++    memcpy( &req->u.reply, &wire_reply, sizeof(wire_reply) );
++    if (wire_reply.reply_header.reply_size)
++        read_reply_data( reply_fd, payload, wire_reply.reply_header.reply_size, request, "checked-payload", capacity );
++    return wire_reply.reply_header.error;
++}
++
  static inline unsigned int wait_reply( int reply_fd, struct __server_request_info *req )
  {
 -    read_reply_data( reply_fd, &req->u.reply, sizeof(req->u.reply) );
@@ -1494,6 +1917,111 @@
      return req->u.reply.reply_header.error;
  }
  
+@@ -287,8 +551,10 @@
+     struct thread_data *data = get_thread_data();
+     struct __server_request_info * const req = req_ptr;
+     unsigned int ret;
++    const char *checked = getenv( "ENDFIELD_REPLY_INTEGRITY" );
+ 
+-    if ((ret = send_request( data->request_fd, req ))) return ret;
++    if ((ret = send_request( data->request_fd, req, data ))) return ret;
++    if (checked && !strcmp( checked, "1" )) return wait_reply_checked( data->reply_fd, req );
+     return wait_reply( data->reply_fd, req );
+ }
+ 
+@@ -346,32 +612,43 @@
+  *
+  * Wait for a reply on the waiting pipe of the current thread.
+  */
+-static int wait_select_reply( int wait_fd[2], void *cookie )
++static int wait_select_reply( int wait_fd[2], void *cookie, const struct thread_data *data )
+ {
+     int signaled;
+     struct wake_up_reply reply;
+ 
+     for (;;)
+     {
+-        int ret;
+-        ret = read( wait_fd[0], &reply, sizeof(reply) );
++        int ret, saved_errno, actual_fd = wait_fd[0];
++        ret = read( actual_fd, &reply, sizeof(reply) );
+         if (ret == sizeof(reply))
+         {
+             if (!reply.cookie) abort_thread( reply.signaled );  /* thread got killed */
+             if (wine_server_get_ptr(reply.cookie) == cookie) return reply.signaled;
+             /* we stole another reply, wait for the real one */
+-            signaled = wait_select_reply( wait_fd, cookie );
++            signaled = wait_select_reply( wait_fd, cookie, data );
+             /* and now put the wrong one back in the pipe */
+             for (;;)
+             {
+-                ret = write( wait_fd[1], &reply, sizeof(reply) );
++                actual_fd = wait_fd[1];
++                ret = write( actual_fd, &reply, sizeof(reply) );
+                 if (ret == sizeof(reply)) break;
++                saved_errno = errno;
++                if ((ret >= 0 || saved_errno != EINTR) && endfield_server_fd_diagnostics)
++                    endfield_server_fd_failure( "wakeup_write", saved_errno, actual_fd, ret, NULL,
++                                                cookie, wait_fd, data );
++                errno = saved_errno;
+                 if (ret >= 0) server_protocol_error( "partial wakeup write %d\n", ret );
+                 if (errno == EINTR) continue;
+                 server_protocol_perror("wakeup write");
+             }
+             return signaled;
+         }
++        saved_errno = errno;
++        if ((ret >= 0 || saved_errno != EINTR) && endfield_server_fd_diagnostics)
++            endfield_server_fd_failure( "wakeup_read", saved_errno, actual_fd, ret, NULL,
++                                        cookie, wait_fd, data );
++        errno = saved_errno;
+         if (ret >= 0) server_protocol_error( "partial wakeup read %d\n", ret );
+         if (errno == EINTR) continue;
+         server_protocol_perror("wakeup read");
+@@ -774,7 +1051,7 @@
+         pthread_sigmask( SIG_SETMASK, &old_set, NULL );
+         if (signaled) break;
+ 
+-        ret = wait_select_reply( data->wait_fd, &cookie );
++        ret = wait_select_reply( data->wait_fd, &cookie, data );
+     }
+     while (ret == STATUS_USER_APC || ret == STATUS_KERNEL_APC);
+ 
+@@ -1606,6 +1883,7 @@
+ {
+     const char *arch = getenv( "WINEARCH" );
+     const char *env_socket = getenv( "WINESERVERSOCKET" );
++    const char *fd_diagnostics = getenv( "ENDFIELD_SERVER_FD_DIAGNOSTICS" );
+     struct thread_data *data = get_thread_data();
+     obj_handle_t version;
+     unsigned int i;
+@@ -1613,6 +1891,7 @@
+     struct sigaction sig_act;
+     size_t info_size;
+ 
++    endfield_server_fd_diagnostics = fd_diagnostics && !strcmp( fd_diagnostics, "1" );
+     server_pid = -1;
+     if (env_socket)
+     {
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -75,6 +75,7 @@
+ #include "wine/server.h"
+ #include "wine/debug.h"
+ #include "unix_private.h"
++#include "msync.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(thread);
+ WINE_DECLARE_DEBUG_CHANNEL(seh);
+@@ -1115,7 +1116,7 @@
+ static DECLSPEC_NORETURN void pthread_exit_wrapper( int status )
+ {
+     struct thread_data *data = get_thread_data();
+-    close( data->alert_fd );
++    if (!do_msync()) close( data->alert_fd );
+     close( data->wait_fd[0] );
+     close( data->wait_fd[1] );
+     close( data->reply_fd );
 --- a/dlls/ntoskrnl.exe/ntoskrnl.c
 +++ b/dlls/ntoskrnl.exe/ntoskrnl.c
 @@ -2514,6 +2514,10 @@
@@ -2693,7 +3221,7 @@
 +            val = __atomic_load_n( &obj->low, __ATOMIC_SEQ_CST );
 +            if ((is_mutex && (val == 0 || val == ~0 || val == tid)) || (!is_mutex && val != 0))
 +            {
-+                if (i > 1) unregister_wait( &receive_message, tid, i );
++                if (i > 0) unregister_wait( &receive_message, tid, i );
 +                wake_tid( tid );
 +                break;
 +            }

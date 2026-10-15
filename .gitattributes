@@ -1,0 +1,4 @@
+# Generated diffs preserve upstream whitespace needed to reconstruct source.
+**/source/*.patch -whitespace
+# Keep verbatim upstream license formatting.
+Vulkan/licenses/MoltenVK-dependencies/** -whitespace

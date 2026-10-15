@@ -1,5 +1,13 @@
 #!/bin/bash
 set -euo pipefail
+# Match the tested profile rather than inheriting graphics/debug overrides.
+for profile_option in ${!ENDFIELD_@} ${!MVK_CONFIG_@} ${!MTL_@} ${!WINE@} ${!DXMT_@} ${!QT_@} ${!QSG_@} ${!QML@} ${!DYLD_@} ${!VK_@} ${!VULKAN_@} ${!MOLTENVK_@}; do
+  unset "$profile_option"
+done
+unset profile_option
+if [ "$(/usr/bin/sw_vers -productVersion | /usr/bin/cut -d. -f1)" -lt 26 ]; then
+  echo '此预编译运行时需要 macOS 26 或更新版本。' >&2; exit 1
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="$(basename "$ROOT")"
 STATE="$ROOT/local"
@@ -25,34 +33,11 @@ fetch() {
 }
 prepare() {
   [ -f "$STATE/ready-v1" ] && return
-  if [ ! -d "$ROOT/runtime" ] && [ ! -d "$ROOT/overlay" ]; then
-    echo "缺少编译产物，请下载 GitHub Releases 中对应的安装包（源码 ZIP 不含二进制）。" >&2; exit 1
+  if [ ! -d "$ROOT/runtime" ]; then
+    echo '请下载同版本 Release 的完整运行时包；Git 源码 ZIP 不含二进制。' >&2; exit 1
   fi
-  /usr/bin/arch -x86_64 /usr/bin/true || { echo "需要安装 Apple Rosetta 2。"; exit 1; }
-  if [ -d "$ROOT/runtime" ]; then
-    (cd "$ROOT/runtime" && shasum -a 256 -c ../RUNTIME-SHA256.txt)
-  else
-  (cd "$ROOT/overlay" && shasum -a 256 -c ../OVERLAY-SHA256.txt)
-  fetch wine.tar.xz 6f9af818b7af6001aeed7818cb32bf0155598c5ea4e3b33380a03cf814e033cd https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.16/wine-devel-11.16-osx64.tar.xz
-  mkdir -p "$STATE/runtime"
-  tar -xf "$STATE/downloads/wine.tar.xz" -C "$STATE/runtime"
-  if [ "$MODE" = DirectX11 ]; then
-    fetch dxmt.tar.gz 8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz
-    mkdir -p "$STATE/dxmt"
-    tar -xf "$STATE/downloads/dxmt.tar.gz" -C "$STATE/dxmt"
-    for dll in d3d11.dll dxgi.dll winemetal.dll; do
-      cp "$STATE/dxmt/v0.80/x86_64-windows/$dll" "$WINE_ROOT/lib/wine/x86_64-windows/$dll"
-    done
-    cp "$STATE/dxmt/v0.80/x86_64-unix/winemetal.so" "$WINE_ROOT/lib/wine/x86_64-unix/winemetal.so"
-  else
-    fetch moltenvk.tar f95765a6229cb7b915990a2890ce12ebe36a730b021545d3d52ae69ce4c4024e https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-macos.tar
-    mkdir -p "$STATE/moltenvk"
-    tar -xf "$STATE/downloads/moltenvk.tar" -C "$STATE/moltenvk"
-    cp "$STATE/moltenvk/MoltenVK/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib" "$WINE_ROOT/lib/libMoltenVK.dylib"
-    codesign --force --sign - "$WINE_ROOT/lib/libMoltenVK.dylib"
-  fi
-  cp -R "$ROOT/overlay/." "$WINE_ROOT/"
-  fi
+  /usr/bin/arch -x86_64 /usr/bin/true || { echo '需要安装 Apple Rosetta 2。'; exit 1; }
+  (cd "$ROOT/runtime" && shasum -a 256 -c ../RUNTIME-SHA256.txt)
   "$WINE_ROOT/bin/wineboot" -u
   # Ensure the extra DXMT builtin is visible to a newly-created prefix.
   if [ "$MODE" = DirectX11 ]; then
@@ -62,10 +47,17 @@ prepare() {
   touch "$STATE/ready-v1"
 }
 check_idle() {
-  if pgrep -f '^C:\\Endfield\\Endfield\.exe([[:space:]]|$)' >/dev/null; then
-    echo "请先正常退出游戏，不能同时启动两个版本或在游戏运行时更新。" >&2; exit 1
+  local processes
+  processes="$(/bin/ps -axo comm=)" || {
+    echo 'Cannot verify Wine process state; refusing to launch.' >&2
+    exit 2
+  }
+  if /usr/bin/grep -Eq '(^|/)(Endfield\.exe|wineserver|wineserver64)$|^C:\\Endfield\\Endfield\.exe$' <<< "$processes"; then
+    echo 'Endfield or a Wine server is already running; refusing a second launch.' >&2
+    exit 1
   fi
 }
+
 select_path() {
   local kind="$1" path
   echo "请粘贴$kind的完整路径，然后回车（不要添加引号或反斜杠转义）："
@@ -94,7 +86,8 @@ launcher_environment() {
   if [ "$MODE" = DirectX11 ]; then
     export WINEDLLOVERRIDES='d3d11,dxgi,winemetal=b'
   else
-    export QT_OPENGL=software QT_QUICK_BACKEND=software
-    export QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu
+    export WINEQT_QUICK_BACKEND=software
   fi
 }
+
+source "$ROOT/game-profile.sh"

@@ -1,5 +1,8 @@
 #!/bin/bash
 set -euo pipefail
+if [ "$(/usr/bin/sw_vers -productVersion | /usr/bin/cut -d. -f1)" -lt 26 ]; then
+  echo '此预编译运行时需要 macOS 26 或更新版本。' >&2; exit 1
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="$(basename "$ROOT")"
 STATE="$ROOT/local"

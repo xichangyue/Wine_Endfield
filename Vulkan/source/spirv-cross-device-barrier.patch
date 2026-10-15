@@ -1,0 +1,43 @@
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index c5a9d433..9200c1f2 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -11009,6 +11009,18 @@ void CompilerMSL::emit_barrier(uint32_t id_exe_scope, uint32_t id_mem_scope, uin
+ 
+ 	uint32_t exe_scope = id_exe_scope ? evaluate_constant_u32(id_exe_scope) : uint32_t(ScopeInvocation);
+ 	uint32_t mem_scope = id_mem_scope ? evaluate_constant_u32(id_mem_scope) : uint32_t(ScopeInvocation);
++	uint32_t mem_sem = id_mem_sem ? evaluate_constant_u32(id_mem_sem) : uint32_t(MemorySemanticsMaskNone);
++	// A Metal control barrier only orders memory within its execution group.
++	// Preserve a wider SPIR-V device memory scope with release/acquire fences
++	// around that rendezvous on Metal versions supporting device fences.
++	const bool device_control_barrier = id_exe_scope && mem_scope == ScopeDevice &&
++	    msl_options.supports_msl_version(3, 2) &&
++	    (mem_sem & (MemorySemanticsUniformMemoryMask | MemorySemanticsImageMemoryMask |
++	                MemorySemanticsCrossWorkgroupMemoryMask));
++	if (device_control_barrier &&
++	    (mem_sem & (MemorySemanticsReleaseMask | MemorySemanticsAcquireReleaseMask |
++	                MemorySemanticsSequentiallyConsistentMask)))
++		emit_barrier(0, id_mem_scope, id_mem_sem);
+ 	// Use the wider of the two scopes (smaller value)
+ 	exe_scope = min(exe_scope, mem_scope);
+ 
+@@ -11033,8 +11045,6 @@ void CompilerMSL::emit_barrier(uint32_t id_exe_scope, uint32_t id_mem_scope, uin
+ 
+ 	bar_stmt += "(";
+ 
+-	uint32_t mem_sem = id_mem_sem ? evaluate_constant_u32(id_mem_sem) : uint32_t(MemorySemanticsMaskNone);
+-
+ 	// Use the | operator to combine flags if we can.
+ 	if (msl_options.supports_msl_version(1, 2))
+ 	{
+@@ -11132,6 +11142,10 @@ void CompilerMSL::emit_barrier(uint32_t id_exe_scope, uint32_t id_mem_scope, uin
+ 	bar_stmt += ");";
+ 
+ 	statement(bar_stmt);
++	if (device_control_barrier &&
++	    (mem_sem & (MemorySemanticsAcquireMask | MemorySemanticsAcquireReleaseMask |
++	                MemorySemanticsSequentiallyConsistentMask)))
++		emit_barrier(0, id_mem_scope, id_mem_sem);
+ 
+ 	assert(current_emitting_block);
+ 	flush_control_dependent_expressions(current_emitting_block->self);

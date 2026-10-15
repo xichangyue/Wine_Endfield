@@ -15,6 +15,9 @@ tar -xf "$ARCHIVE" -C "$WORK"
 SOURCE="$WORK/wine-wine-11.16"
 patch -p1 -d "$SOURCE" < "$REPO/$MODE/source/wine-11.16.patch"
 flags=(--build=x86_64-apple-darwin25.6.0 --host=x86_64-apple-darwin25.6.0 --enable-win64 --disable-tests --without-x --without-gstreamer --without-gnutls --without-freetype --without-sdl --without-vulkan)
+# The published, user-tested modules already require macOS 26. Do not imply
+# compatibility with earlier systems by changing their Mach-O load commands.
+export MACOSX_DEPLOYMENT_TARGET=26.0
 (cd "$WORK/unix"; CC='/usr/bin/clang -arch x86_64' CXX='/usr/bin/clang++ -arch x86_64' "$SOURCE/configure" "${flags[@]}" --enable-archs=none)
 (cd "$WORK/pe"; CC='/usr/bin/clang -arch x86_64' CXX='/usr/bin/clang++ -arch x86_64' "$SOURCE/configure" "${flags[@]}" --enable-archs=x86_64)
 make -C "$WORK/unix" -j6 dlls/ntdll/ntdll.so server/wineserver

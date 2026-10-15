@@ -57,7 +57,7 @@ final class Installer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading
         stack.spacing = 14; stack.translatesAutoresizingMaskIntoConstraints = false
         func label(_ text: String) { stack.addArrangedSubview(NSTextField(wrappingLabelWithString: text)) }
-        label("1. 提供官方启动器 EXE（已验证 1.5.0 安装包）")
+        label("1. 提供从官网下载的 Windows 官方启动器 EXE")
         exe.placeholderString = "选择文件，或粘贴官方安装器的完整路径"
         exe.widthAnchor.constraint(equalToConstant: 560).isActive = true
         destination.widthAnchor.constraint(equalToConstant: 560).isActive = true
@@ -70,8 +70,8 @@ final class Installer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         stack.addArrangedSubview(folder)
         vulkan.state = .on; dx11.state = .on; desktop.state = .on
         stack.addArrangedSubview(vulkan); stack.addArrangedSubview(dx11); stack.addArrangedSubview(desktop)
-        label("需要 Apple Silicon 和 Rosetta 2。不会自动接受官方协议。\n请通过本项目快捷方式游玩，不使用官方“开始游戏”按钮。")
-        let start = NSButton(title: "安装环境并打开官方启动器", target: self, action: #selector(install))
+        label("需要 Apple Silicon、macOS 26 及 Rosetta 2。不会自动接受官方协议。\n请通过本项目快捷方式游玩，不使用官方“开始游戏”按钮。")
+        let start = NSButton(title: "安装或升级环境并打开官方启动器", target: self, action: #selector(install))
         start.bezelStyle = .rounded; stack.addArrangedSubview(start)
         progress.style = .bar; progress.isIndeterminate = true
         progress.widthAnchor.constraint(equalToConstant: 560).isActive = true
@@ -100,6 +100,9 @@ final class Installer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.runModal() == .OK, let u = p.url { destination.stringValue = u.appendingPathComponent("Wine Endfield").path }
     }
     @objc func install() {
+        guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 else {
+            alert("系统版本不支持", "此预编译运行时需要 macOS 26 或更新版本。"); return
+        }
         let official = (exe.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
         guard official.lowercased().hasSuffix(".exe"), FileManager.default.fileExists(atPath: official) else {
             alert("请选择官方安装器", "请选择文件，或粘贴官方 EXE 的完整路径，不要添加引号。"); return
@@ -107,8 +110,11 @@ final class Installer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let modes = [("Vulkan", vulkan.state), ("DirectX11", dx11.state)].filter { $0.1 == .on }.map { $0.0 }
         guard !modes.isEmpty else { alert("请选择渲染方式", "至少选择一种。"); return }
         let root = (destination.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
-        guard root.hasPrefix("/"), root != "/" else { alert("安装路径无效", "请提供新的安装文件夹完整路径。"); return }
+        guard root.hasPrefix("/"), root != "/", !root.contains("\n") else { alert("安装路径无效", "请提供安装文件夹的完整路径。"); return }
         let fm = FileManager.default
+        if (try? fm.attributesOfItem(atPath: root)[.type] as? FileAttributeType) == .typeSymbolicLink {
+            alert("安装路径无效", "安装目录不能是符号链接。"); return
+        }
         if fm.fileExists(atPath: root) && !fm.fileExists(atPath: root + "/.endfield-installer-v1") {
             alert("安装目录已有文件", "请选择其他位置；不会覆盖已有目录。"); return
         }

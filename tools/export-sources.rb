@@ -2,12 +2,16 @@
 # Generate variant patches against a pristine wine-wine-11.16 source tree.
 require 'open3'
 require 'fileutils'
-abort 'usage: ruby export-sources.rb PRISTINE MODIFIED OUTPUT' unless ARGV.length == 3
-original, modified, output = ARGV.map { |p| File.expand_path(p) }
+abort 'usage: ruby export-sources.rb PRISTINE MODIFIED OUTPUT [Vulkan|DirectX11]' unless [3, 4].include?(ARGV.length)
+original, modified, output = ARGV.first(3).map { |p| File.expand_path(p) }
+mode = ARGV[3] || 'Vulkan'
+abort 'mode must be Vulkan or DirectX11' unless %w[Vulkan DirectX11].include?(mode)
+# Different modes use different historical source trees. Do not regenerate the
+# retained DX11 patch from a later Vulkan tree as a side effect of an export.
 files = %w[
  dlls/ntdll/Makefile.in dlls/ntdll/unix/loader.c dlls/ntdll/unix/msync.c
  dlls/ntdll/unix/msync.h dlls/ntdll/unix/sync.c dlls/ntdll/unix/signal_x86_64.c
- dlls/ntdll/unix/server.c dlls/ntoskrnl.exe/ntoskrnl.c
+ dlls/ntdll/unix/server.c dlls/ntdll/unix/thread.c dlls/ntoskrnl.exe/ntoskrnl.c
  dlls/ntoskrnl.exe/ntoskrnl_private.h dlls/ntoskrnl.exe/ntoskrnl.exe.spec
  dlls/kernel32/module.c server/token.c server/Makefile.in server/inproc_sync.c
  server/main.c server/msync.c server/msync.h server/protocol.def server/thread.c
@@ -15,10 +19,13 @@ files = %w[
  dlls/winemac.drv/macdrv_main.c dlls/winemac.drv/macdrv_cocoa.h
  dlls/winemac.drv/cocoa_window.m dlls/winemac.drv/macdrv.h dlls/winemac.drv/window.c
 ]
-%w[Vulkan DirectX11].each do |mode|
+[mode].each do |mode|
   patch = files.map do |file|
     next '' if mode == 'Vulkan' && file.start_with?('dlls/winemac.drv/')
     next '' if mode == 'DirectX11' && file == 'dlls/ntdll/unix/server.c'
+    # The accepted Vulkan runtime includes the MSync alert-slot cleanup. The
+    # retained DirectX11 runtime predates it and must keep its original patch.
+    next '' if mode == 'DirectX11' && file == 'dlls/ntdll/unix/thread.c'
     a = File.join(original, file)
     b = File.join(modified, file)
     a = '/dev/null' unless File.exist?(a)

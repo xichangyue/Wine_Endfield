@@ -14,6 +14,5 @@ else
 fi
 [ -f "$SELECTED" ] || { echo "找不到启动器文件"; exit 1; }
 cd "$(dirname "$SELECTED")"
-export QT_OPENGL=software QT_QUICK_BACKEND=software
-export QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu
+launcher_environment
 "$WINE_ROOT/bin/wine" "$SELECTED" > "$STATE/logs/launcher-$(date +%Y%m%d-%H%M%S).log" 2>&1
