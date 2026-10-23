@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "v0.4.0-recovery",
+  "release": "v0.4.0-preview",
   "baseline": {
     "archive": "wine-11.16-source.tar.gz",
     "sha256": "2b6d5cff784cb774f7f17b9a640b123ca8361d89c4280c0021b70bb6f3cd1b1c",
@@ -52,9 +52,9 @@
   "release_readiness": "complete_corresponding_source_prepared",
   "runtime_snapshot": "0.4.0-recovery-release-20261024",
   "build_records": "MODULE-BUILD-RECORDS.json",
-  "build_records_sha256": "913cdb346ec2c2ae02a4681f9daf7ef468c6f576ec172abf94b26ad55b5e2b44",
+  "build_records_sha256": "2652715b37777835a69a0d8dcc7fd72a0e2ead1b6f47d8cb6dfca1f67be30246",
   "public_build_script": "tools/build-recovery-wine.sh",
-  "public_build_script_sha256": "fad3165697184718094a68ea302cdc5ed56340cfd4c77ca3836584c603f7b3b5",
+  "public_build_script_sha256": "4bfeea709811546b6210cde28f97f9b1f8a7bc0fb1bf91c1029f8ba9c491bc4e",
   "modified_runtime_modules": [
     {
       "path": "lib/wine/x86_64-windows/ntoskrnl.exe",

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "v0.4.0-recovery",
+  "release": "v0.4.0-preview",
   "scope": "Sanitized historical build evidence and portable GnuTLS rebuild; the public build script is a reproducible recipe, not a byte-identical rebuild claim.",
   "records": {
     "ntoskrnl": {

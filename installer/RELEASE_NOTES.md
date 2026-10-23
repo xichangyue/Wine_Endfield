@@ -1,8 +1,8 @@
-# v0.4.0-recovery：启动修复、旧版升级、自动清理与移动硬盘安装
+# v0.4.0-preview：启动修复、旧版升级、自动清理与移动硬盘安装
 
 本版恢复通过官方启动器进入游戏，增加旧版原地升级、安装路径选择和成功后的自动清理。
 
-推荐下载 **Wine_Endfield-Installer-0.4.0-recovery.zip**（约251 MiB）。解压后打开“终末地 Mac 安装器.app”。需要 Apple Silicon、macOS 26+、Rosetta 2；无需 Xcode、编译器或 Python。GitHub 自动生成的 Source code ZIP 不含可直接使用的安装器。
+推荐下载 **Wine_Endfield-Installer-0.4.0-preview.zip**（约251 MiB）。解压后打开“终末地 Mac 安装器.app”。需要 Apple Silicon、macOS 26+、Rosetta 2；无需 Xcode、编译器或 Python。GitHub 自动生成的 Source code ZIP 不含可直接使用的安装器。
 
 ## 从 v0.2 / v0.3 原地升级
 
@@ -57,4 +57,4 @@
 
 此版为预发布、临时签名且未经过 Apple 公证。独立安装器和运行包不包含游戏、官方安装器、账号或个人缓存。同一 Release 提供完整修改后 Wine 源码及模块变体、MoltenVK 源码、上游 DXMT/7-Zip 源码和校验文件。请同时保留许可与对应源码，详见仓库 THIRD_PARTY.md、BUILD.zh-CN.md 和 VALIDATION.md。
 
-新版安装器还在现有游戏的独立克隆副本中实测：通过官方启动器进入游戏，使用者确认画面正常；原日常环境未替换。
+新版安装器还在现有游戏的独立克隆副本中实测：通过官方启动器进入游戏，使用者确认画面正常，随后反馈游玩卡顿，原因尚未确定。该测试保留了原用户环境和已有 Vulkan 缓存，不能简单归因于没有缓存；原日常环境未替换。

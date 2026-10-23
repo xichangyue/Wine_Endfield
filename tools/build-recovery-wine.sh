@@ -15,7 +15,7 @@ archive="$(cd "$(dirname "$archive")" && pwd)/$(basename "$archive")"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 tar -xf "$archive" -C "$output"
-package="$output/Wine-11.16-Endfield-v0.4.0-recovery-source"
+package="$output/Wine-11.16-Endfield-v0.4.0-preview-source"
 (cd "$package" && shasum -a 256 --check SOURCE-SHA256.txt > "$output/source-check.log")
 source="$package/wine"
 patch --batch -E -p1 -d "$source" -i "$package/variants/$variant.patch" > "$output/variant-patch.log"

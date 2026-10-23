@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "v0.4.0-recovery",
+  "release": "v0.4.0-preview",
   "verification_date": "2026-10-23",
   "runtime_root": "Recovery/runtime/Wine Devel.app/Contents/Resources/wine",
   "dxmt": {

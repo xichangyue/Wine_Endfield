@@ -3,7 +3,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PAYLOAD="${1:?提供含 Recovery 完整 tar.xz 的目录}"
 OUTPUT="${2:?输出目录}"
-VERSION="${3:-v0.4.0-recovery}"
+VERSION="${3:-v0.4.0-preview}"
 [[ "$VERSION" =~ ^v[0-9][A-Za-z0-9._-]*$ ]] || { echo '版本号格式无效'; exit 1; }
 PAYLOAD="$(cd "$PAYLOAD" && pwd)"
 mkdir -p "$OUTPUT"

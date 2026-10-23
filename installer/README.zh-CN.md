@@ -1,6 +1,6 @@
 # 终末地 Mac 安装器 0.4.0（预发布）
 
-本安装器包含 `0.4.0-recovery-release-20261024` 修复运行库，支持旧版升级、自选安装目录和成功后的自动清理。保留已验证的图形与游戏核心组件，认证组件使用相对路径加载包内 GnuTLS。需要 Apple Silicon、macOS 26 或更新版本及 Rosetta 2；使用者无需安装编译器或 Python。此版未经过 Apple 公证。
+本安装器包含 `0.4.0-preview-20261024` 修复运行库，支持旧版升级、自选安装目录和成功后的自动清理。保留已验证的图形与游戏核心组件，认证组件使用相对路径加载包内 GnuTLS。需要 Apple Silicon、macOS 26 或更新版本及 Rosetta 2；使用者无需安装编译器或 Python。此版未经过 Apple 公证。
 
 ## 新安装
 
@@ -54,8 +54,8 @@ bash installer/test-installation.sh /完整安装目录
 ## 构建
 
 ```bash
-bash tools/package-recovery.sh /固定版本目录 /新的payload输出目录 v0.4.0-recovery
-bash tools/build-installer.sh /payload输出目录 /新的安装器输出目录 v0.4.0-recovery
+bash tools/package-recovery.sh /固定版本目录 /新的payload输出目录 v0.4.0-preview
+bash tools/build-installer.sh /payload输出目录 /新的安装器输出目录 v0.4.0-preview
 ```
 
 构建需要 Xcode Command Line Tools。安装器不携带官方 EXE、游戏、prefix、账号或个人缓存。源码和许可边界见 `THIRD_PARTY.md` 及 payload 的 `PACKAGE-NOTICE.txt`；对应的修改后 Wine、MoltenVK 源码及其他组件来源随 Release 提供；复用运行库无需在用户机器上编译。

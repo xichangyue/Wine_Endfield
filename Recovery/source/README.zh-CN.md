@@ -1,6 +1,6 @@
 # v0.4.0 修复运行库的 Wine 源码
 
-本目录记录新版统一运行库的 Wine 变更。**不要使用 v0.3 的 `Vulkan/source/wine-11.16.patch` 或旧 DirectX11 补丁重建新版。** 从同一 Release 下载 `Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz`；其中包含完整 Wine 源码、许可证、逐文件校验、聚合补丁、各模块对应的历史源码变体以及构建脚本。
+本目录记录新版统一运行库的 Wine 变更。**不要使用 v0.3 的 `Vulkan/source/wine-11.16.patch` 或旧 DirectX11 补丁重建新版。** 从同一 Release 下载 `Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz`；其中包含完整 Wine 源码、许可证、逐文件校验、聚合补丁、各模块对应的历史源码变体以及构建脚本。
 
 运行库是逐模块验证后冻结的组合，并非在最后一棵源码上一次构建的结果。源码包的 `wine/` 是所有已采用修改的完整源码集合；`variants/` 将它恢复到各模块实际使用的完整源码树。每个变体均与保留的历史源码逐文件核对，避免共享头文件和未采用的实验修改混入构建。
 
@@ -21,11 +21,11 @@
 先校验下载的附件 SHA-256。以下脚本会在**新的输出目录**解压并校验完整源码，为所选模块应用对应变体，再构建到 `overlay/`。不会替换现有运行库或运行 Wine。
 
 ```bash
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz ntdll /输出路径/ntdll
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz ntoskrnl /输出路径/ntoskrnl
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz wineserver /输出路径/wineserver
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz winemac /输出路径/winemac
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz kernel32 /输出路径/kernel32
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz ntdll /输出路径/ntdll
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz ntoskrnl /输出路径/ntoskrnl
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz wineserver /输出路径/wineserver
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz winemac /输出路径/winemac
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz kernel32 /输出路径/kernel32
 ```
 
 附加 `--check` 只做解压、完整源码校验及变体恢复，不要求编译器，也不会运行 Wine。归档已经包含聚合修改，**不要对 `wine/` 再次应用 `wine-11.16-recovery.patch`**；该补丁仅用于审阅或对固定的原始 Wine 11.16 压缩包应用。原始压缩包 SHA-256 为 `2b6d5cff784cb774f7f17b9a640b123ca8361d89c4280c0021b70bb6f3cd1b1c`。

@@ -8,7 +8,7 @@ Release 的安装器已包含运行库，普通用户无需编译。v0.4.0 使�
 
 ## Wine 模块
 
-从同一 Release 下载 `Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz`，并按 Release 的 `SHA256SUMS.txt` 校验。该附件包含完整 Wine 源码、五套历史变体、许可证、逐文件清单和构建脚本。不要使用旧版 `build-overlay.sh` 或 Vulkan/DirectX11 两套补丁重建本版。
+从同一 Release 下载 `Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz`，并按 Release 的 `SHA256SUMS.txt` 校验。该附件包含完整 Wine 源码、五套历史变体、许可证、逐文件清单和构建脚本。不要使用旧版 `build-overlay.sh` 或 Vulkan/DirectX11 两套补丁重建本版。
 
 运行库按模块组合：`ntdll`、`ntoskrnl`、`wineserver`、桌面桥接和认证模块各自采用不同的已验证源码树；脚本会恢复相应变体。具体映射见 [Recovery/source/README.zh-CN.md](Recovery/source/README.zh-CN.md) 和 `SOURCE-PROVENANCE.json`。
 
@@ -19,9 +19,9 @@ git clone https://github.com/xichangyue/Wine_Endfield.git
 cd Wine_Endfield
 git pull --ff-only
 # 只解压、校验并恢复源码，不编译、不运行 Wine：
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz ntdll /新的输出路径/ntdll-check --check
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz ntdll /新的输出路径/ntdll-check --check
 # 实际编译，使用另一个新的输出目录：
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-recovery-source.tar.xz ntdll /新的输出路径/ntdll
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz ntdll /新的输出路径/ntdll
 ```
 
 第二个参数可为 `ntdll`、`ntoskrnl`、`wineserver`、`winemac`、`kernel32`、`auth`。输出为该目录下的 `overlay/`，脚本不安装、不运行 Wine。源码包内已有聚合修改；不要重复应用 `wine-11.16-recovery.patch`。该补丁仅供审阅或对固定原始 Wine 11.16 基线应用，基线 SHA-256 记录在来源清单中。

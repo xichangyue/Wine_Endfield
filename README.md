@@ -9,14 +9,14 @@ arm mac的《明日方舟：终末地》兼容层
 ### 注意事项
 1.作者只在M1Max的Mac中进行了测试，系统为macOS26.6.1，不保证其他主机可用。   
 2.因为反作弊的原因，又因为本项目使用wine模拟作为实现方式，所以不保证账号安全，可能有封号风险（虽然作者一直拿这个玩）。   
-3.理论讲Vulkan版本会更流畅，但需要有缓存后才会流畅，初次游玩时应该会很卡，但需要适应一段时间后才会流畅；DirectX 11版本一直相对流畅，但性能上限不及Vulkan版本。   
+3.Vulkan和DirectX 11的流畅度取决于设备、场景和缓存状态。新管线编译可能造成短时卡顿，但已有缓存也不保证消除卡顿；本版尚未完成两种渲染方式的系统性能对比，不保证等待缓存后一定流畅。
 4.输入映射的是windows的输入方式，需要自行适应，由于作者使用的就是windows版键盘所以无障碍。   
 
 爱来自GPT-6 Astra。
 
-## v0.4.0-recovery：修复版安装器（预发布）
+## v0.4.0-preview：修复版安装器（预发布）
 
-从 [v0.4.0-recovery 发布页](https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.4.0-recovery) 下载 **Wine_Endfield-Installer-0.4.0-recovery.zip**，解压后打开“终末地 Mac 安装器.app”。需要 **Apple Silicon、macOS 26 或更新版本及 Rosetta 2**；使用者无需编译器或 Python。请勿下载 GitHub 自动生成的 Source code ZIP 作为安装器。
+从 [v0.4.0-preview 发布页](https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.4.0-preview) 下载 **Wine_Endfield-Installer-0.4.0-preview.zip**，解压后打开“终末地 Mac 安装器.app”。需要 **Apple Silicon、macOS 26 或更新版本及 Rosetta 2**；使用者无需编译器或 Python。请勿下载 GitHub 自动生成的 Source code ZIP 作为安装器。
 
 本版统一已验证的 Wine 修复运行库，修正官方启动器白屏相关图形路径和认证组件的依赖加载位置，并补充安装失败的阶段、退出码和具体错误。仅在 M1 Max / macOS 26.6.1 验证，不把此前收到的“mac 27.2 安装未完成”反馈视为已定位或已修复；若新版仍失败，请保留日志。
 
