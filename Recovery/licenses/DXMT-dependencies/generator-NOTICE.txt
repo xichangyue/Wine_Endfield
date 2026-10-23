@@ -1,0 +1,18 @@
+Source: https://github.com/3Shain/dxmt/blob/589adb780354b461645b29999cefaf533594ee99/include/tl/generator.hpp
+
+///
+// generator - Single-header, ranges-compatible generator type built
+// on C++20 coroutines
+// Written in 2021 by Sy Brand (tartanllama@gmail.com, @TartanLlama)
+//
+// Documentation available at https://tl.tartanllama.xyz/
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to the
+// public domain worldwide. This software is distributed without any warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software. If not, see
+// <http://creativecommons.org/publicdomain/zero/1.0/>.
+///
+

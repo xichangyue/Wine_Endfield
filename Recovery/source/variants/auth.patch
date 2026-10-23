@@ -1,0 +1,3060 @@
+--- a/dlls/ntdll/unix/msync.c
++++ b/dlls/ntdll/unix/msync.c
+@@ -961,10 +961,11 @@
+ 
+         while (1)
+         {
+-            /* Mutexes this attempt took over, and which of them were abandoned. */
+-            ULONGLONG acquired, abandoned;
++            BOOL abandoned;
+ 
+ tryagain:
++            abandoned = FALSE;
++
+             /* First step: try to wait on each object in sequence. */
+ 
+             for (i = 0; i < count; i++)
+@@ -1023,7 +1024,6 @@
+             }
+ 
+             /* Yep, still signaled. Now quick, grab everything. */
+-            acquired = abandoned = 0;
+             for (i = 0; i < count; i++)
+             {
+                 switch (((struct event *)objs_shm[i])->msync_type)
+@@ -1038,9 +1038,8 @@
+                         goto tooslow;
+                     if (__sync_val_compare_and_swap( &mutex->tid, tid, current_tid ) != tid)
+                         goto tooslow;
+-                    acquired |= (ULONGLONG)1 << i;
+                     if (tid == ~0)
+-                        abandoned |= (ULONGLONG)1 << i;
++                        abandoned = TRUE;
+                     break;
+                 }
+                 case MSYNC_SEMAPHORE:
+@@ -1096,17 +1095,16 @@
+                 case MSYNC_MUTEX:
+                 {
+                     struct mutex *mutex = (struct mutex *)objs_shm[i];
+-                    /* Mutexes we already owned were left untouched. */
+-                    if (!(acquired & ((ULONGLONG)1 << i))) break;
+-                    __atomic_store_n( &mutex->tid, abandoned & ((ULONGLONG)1 << i) ? ~0 : 0, __ATOMIC_SEQ_CST );
+-                    signal_all( mutex, objs[i] );
++                    /* HACK: This won't do the right thing with abandoned
++                     * mutexes, but fixing it is probably more trouble than
++                     * it's worth. */
++                    __atomic_store_n( &mutex->tid, 0, __ATOMIC_SEQ_CST );
+                     break;
+                 }
+                 case MSYNC_SEMAPHORE:
+                 {
+                     struct semaphore *semaphore = (struct semaphore *)objs_shm[i];
+                     __sync_fetch_and_add( &semaphore->count, 1 );
+-                    signal_all( semaphore, objs[i] );
+                     break;
+                 }
+                 case MSYNC_AUTO_EVENT:
+@@ -1114,7 +1112,6 @@
+                 {
+                     struct event *event = (struct event *)objs_shm[i];
+                     __atomic_store_n( &event->signaled, 1, __ATOMIC_SEQ_CST );
+-                    signal_all( event, objs[i] );
+                     break;
+                 }
+                 default:
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2306,19 +2306,14 @@
+             BYTE bytes[16] = {0};
+             unsigned int count = virtual_uninterrupted_read_memory( (void *)context.c.Rip, bytes, sizeof(bytes) );
+ #ifdef __APPLE__
+-            unsigned int prefix_count = count && context.c.SegCs == cs64_sel && (bytes[0] & 0xf0) == 0x40;
+-
+-            /* Register-form NOP, optionally preceded by one REX in 64-bit mode.
+-             * ModRM must encode mod=3 and opcode extension /0; REX.R is ignored
+-             * for opcode extensions. Do not swallow other illegal instructions. */
+-            if (count >= prefix_count + 3 && bytes[prefix_count] == 0x0f &&
+-                bytes[prefix_count + 1] == 0x1f && (bytes[prefix_count + 2] & 0xf8) == 0xc0)
++            /* Register-form NOP, ModRM mod=3 and opcode extension /0.
++             * Do not swallow other illegal instructions or memory forms. */
++            if (count >= 3 && bytes[0] == 0x0f && bytes[1] == 0x1f && (bytes[2] & 0xf8) == 0xc0)
+             {
+                 static unsigned int observed;
+                 if (observed++ < 4)
+-                    ERR_(seh)( "ENDFIELD-LAB emulating NOP rip=%p rsp=%p length=%u\n",
+-                               (void *)context.c.Rip, (void *)context.c.Rsp, prefix_count + 3 );
+-                RIP_sig(sigcontext) += prefix_count + 3;
++                    ERR_(seh)( "ENDFIELD-LAB emulating NOP rip=%p rsp=%p\n", (void *)context.c.Rip, (void *)context.c.Rsp );
++                RIP_sig(sigcontext) += 3;
+                 leave_handler( data, sigcontext );
+                 return;
+             }
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3026,15 +3026,6 @@
+ }
+ 
+ 
+-static NTSTATUS set_image_no_execute( struct file_view *view )
+-{
+-    if (!set_vprot( view, view->base, view->size, VPROT_COMMITTED | VPROT_READ ))
+-        return STATUS_ACCESS_DENIED;
+-    view->protect &= ~(VPROT_WRITE | VPROT_WRITECOPY | VPROT_EXEC);
+-    return STATUS_SUCCESS;
+-}
+-
+-
+ /***********************************************************************
+  *           map_image_into_view
+  *
+@@ -3043,7 +3034,7 @@
+  */
+ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRING *nt_name, int fd,
+                                      struct pe_image_info *image_info, USHORT machine,
+-                                     int shared_fd, BOOL removable, BOOL no_execute )
++                                     int shared_fd, BOOL removable )
+ {
+     IMAGE_DOS_HEADER *dos;
+     IMAGE_NT_HEADERS *nt;
+@@ -3107,15 +3098,10 @@
+         }
+ 
+         /* set the image protections */
+-        if (no_execute)
+-            status = set_image_no_execute( view );
+-        else
+-        {
+-            set_vprot( view, ptr, total_size, VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY | VPROT_EXEC );
+-            status = STATUS_SUCCESS;
+-        }
++        set_vprot( view, ptr, total_size, VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY | VPROT_EXEC );
+ 
+         /* no relocations are performed on non page-aligned binaries */
++        status = STATUS_SUCCESS;
+         goto done;
+     }
+ 
+@@ -3253,13 +3239,6 @@
+         }
+     }
+ 
+-    /* A nonexecuting image view is read-only regardless of section characteristics. */
+-    if (no_execute)
+-    {
+-        status = set_image_no_execute( view );
+-        goto done;
+-    }
+-
+     /* set the image protections */
+ 
+     set_vprot( view, ptr, ROUND_SIZE( 0, header_size, align_mask ), VPROT_COMMITTED | VPROT_READ );
+@@ -3360,17 +3339,15 @@
+  * Map a view for a PE image at an appropriate address.
+  */
+ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_info *image_info, SIZE_T size,
+-                                ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type, BOOL no_execute )
+-{
+-    unsigned int vprot = SEC_IMAGE | SEC_FILE | VPROT_COMMITTED | VPROT_READ | VPROT_WRITECOPY;
++                                ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type )
++{
++    unsigned int vprot = SEC_IMAGE | SEC_FILE | VPROT_COMMITTED | VPROT_READ | VPROT_EXEC | VPROT_WRITECOPY;
+     void *base;
+     NTSTATUS status;
+     ULONG_PTR start, end;
+     BOOL top_down = (image_info->image_charact & IMAGE_FILE_DLL) &&
+                     (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated);
+ 
+-    if (!no_execute) vprot |= VPROT_EXEC;
+-
+     limit_low = max( limit_low, (ULONG_PTR)address_space_start );  /* make sure the DOS area remains free */
+     if (!limit_high) limit_high = (ULONG_PTR)user_space_limit;
+ 
+@@ -3424,12 +3401,11 @@
+ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size_ptr,
+                                    ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type,
+                                    struct pe_mapping_info *pe_mapping, USHORT machine,
+-                                   BOOL is_builtin, off_t offset, unsigned int sec_flags)
++                                   BOOL is_builtin, off_t offset)
+ {
+     int unix_fd = -1, needs_close;
+     int shared_fd = -1, shared_needs_close = 0;
+     SIZE_T size = pe_mapping->image.map_size;
+-    BOOL no_execute = (sec_flags & SEC_IMAGE_NO_EXECUTE) == SEC_IMAGE_NO_EXECUTE;
+     struct file_view *view;
+     unsigned int status;
+     sigset_t sigset;
+@@ -3462,11 +3438,11 @@
+ 
+     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+ 
+-    status = map_image_view( &view, &pe_mapping->image, size, limit_low, limit_high, alloc_type, no_execute );
++    status = map_image_view( &view, &pe_mapping->image, size, limit_low, limit_high, alloc_type );
+     if (status) goto done;
+ 
+     status = map_image_into_view( view, &pe_mapping->nt_name, unix_fd, &pe_mapping->image,
+-                                  machine, shared_fd, needs_close, no_execute );
++                                  machine, shared_fd, needs_close );
+     if (status == STATUS_SUCCESS)
+     {
+         if (offset)
+@@ -3567,14 +3543,11 @@
+             teb64->Tib.ArbitraryUserPointer = PtrToUlong(data->teb->Tib.ArbitraryUserPointer);
+         }
+         /* check if we can replace that mapping with the builtin */
+-        if ((sec_flags & SEC_IMAGE_NO_EXECUTE) == SEC_IMAGE_NO_EXECUTE)
+-            res = STATUS_IMAGE_ALREADY_LOADED;  /* map the file rather than an executable builtin */
+-        else
+-            res = load_builtin( pe_mapping, machine, &info, addr_ptr, size_ptr,
+-                                limit_low, limit_high, offset.QuadPart );
++        res = load_builtin( pe_mapping, machine, &info, addr_ptr, size_ptr,
++                            limit_low, limit_high, offset.QuadPart );
+         if (res == STATUS_IMAGE_ALREADY_LOADED)
+             res = virtual_map_image( handle, addr_ptr, size_ptr, limit_low, limit_high,
+-                                     alloc_type, pe_mapping, machine, FALSE, offset.QuadPart, sec_flags );
++                                     alloc_type, pe_mapping, machine, FALSE, offset.QuadPart );
+         free_pe_mapping_info( pe_mapping );
+         if (teb64) teb64->Tib.ArbitraryUserPointer = prev;
+         return res;
+@@ -3858,7 +3831,7 @@
+     else
+     {
+         status = virtual_map_image( mapping, module, size, limit_low, limit_high, 0,
+-                                    pe_mapping, machine, TRUE, offset, sec_flags );
++                                    pe_mapping, machine, TRUE, offset );
+         virtual_fill_image_information( &pe_mapping->image, info );
+     }
+ 
+@@ -3891,7 +3864,7 @@
+     if (status == STATUS_IMAGE_ALREADY_LOADED)
+     {
+         status = virtual_map_image( mapping, module, size, limit_low, limit_high, 0,
+-                                    pe_mapping, machine, FALSE, 0, sec_flags );
++                                    pe_mapping, machine, FALSE, 0 );
+         virtual_fill_image_information( &pe_mapping->image, info );
+     }
+     free_pe_mapping_info( pe_mapping );
+@@ -6671,7 +6644,6 @@
+             {
+                 SECTION_BASIC_INFORMATION *info = ptr;
+                 info->Attributes    = reply->flags;
+-                if (info->Attributes & SEC_IMAGE) info->Attributes &= ~SEC_NOCACHE;
+                 info->BaseAddress   = NULL;
+                 info->Size.QuadPart = reply->size;
+                 if (ret_size) *ret_size = sizeof(*info);
+--- a/dlls/ntoskrnl.exe/Makefile.in
++++ b/dlls/ntoskrnl.exe/Makefile.in
+@@ -6,10 +6,8 @@
+ VER_PRODUCTVERSION = 6,1,7601,21863
+ 
+ SOURCES = \
+-	deferred.c \
+ 	instr.c \
+ 	ntoskrnl.c \
+ 	plugplay.idl \
+ 	pnp.c \
+-	se_exports.c \
+ 	sync.c
+--- a/dlls/ntoskrnl.exe/deferred.c
++++ /dev/null
+@@ -1,173 +0,0 @@
+-/*
+- * Process-lifetime deferred object release queue.
+- *
+- * Copyright 2026 OpenAI
+- *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Lesser General Public
+- * License as published by the Free Software Foundation; either
+- * version 2.1 of the License, or (at your option) any later version.
+- */
+-
+-#ifndef DEFERRED_NATIVE_TEST
+-#include "ntoskrnl_private.h"
+-#endif
+-#include "deferred.h"
+-
+-WINE_DEFAULT_DEBUG_CHANNEL(ntoskrnl);
+-
+-static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
+-static HANDLE wake_event, drained_event, worker_handle;
+-static struct list pending = LIST_INIT(pending);
+-DECLARE_CRITICAL_SECTION(deferred_cs);
+-static struct deferred_delete_stats counters;
+-#ifdef DEFERRED_NATIVE_TEST
+-static BOOL test_stop;
+-#endif
+-
+-static DWORD WINAPI deferred_worker(void *unused)
+-{
+-    struct deferred_delete_entry *entry;
+-    BOOL complete;
+-    DWORD wait;
+-    (void)unused;
+-
+-    for (;;)
+-    {
+-        EnterCriticalSection(&deferred_cs);
+-        if (list_empty(&pending))
+-        {
+-#ifdef DEFERRED_NATIVE_TEST
+-            if (test_stop)
+-            {
+-                LeaveCriticalSection(&deferred_cs);
+-                return 0;
+-            }
+-#endif
+-            if (!ResetEvent(wake_event)) counters.wake_failures++;
+-            LeaveCriticalSection(&deferred_cs);
+-            /* A timeout also guarantees a queue check if a wake failed. */
+-            wait = WaitForSingleObject(wake_event, 100);
+-            if (wait == WAIT_FAILED)
+-            {
+-                EnterCriticalSection(&deferred_cs);
+-                counters.wake_failures++;
+-                LeaveCriticalSection(&deferred_cs);
+-                Sleep(100);
+-            }
+-            continue;
+-        }
+-
+-        entry = LIST_ENTRY(list_head(&pending), struct deferred_delete_entry, entry);
+-        list_remove(&entry->entry);
+-        list_init(&entry->entry);
+-        counters.queued--;
+-        counters.inflight++;
+-        LeaveCriticalSection(&deferred_cs);
+-
+-        /* A successful consume may free entry. Never access it afterwards. */
+-        complete = entry->consume(entry);
+-        if (!complete) Sleep(10);
+-
+-        EnterCriticalSection(&deferred_cs);
+-        counters.inflight--;
+-        if (complete) counters.completed++;
+-        else
+-        {
+-            /* Failure retains the object's actual queue reference. */
+-            list_add_tail(&pending, &entry->entry);
+-            counters.queued++;
+-            counters.retries++;
+-        }
+-        if (!counters.inflight && list_empty(&pending))
+-            if (!SetEvent(drained_event)) counters.wake_failures++;
+-        LeaveCriticalSection(&deferred_cs);
+-    }
+-}
+-
+-static BOOL CALLBACK initialize_executor(INIT_ONCE *once, void *parameter, void **context)
+-{
+-    HANDLE wake, drained, worker;
+-    HMODULE module;
+-    (void)once; (void)parameter; (void)context;
+-
+-    if (!(wake = CreateEventW(NULL, TRUE, FALSE, NULL))) return FALSE;
+-    if (!(drained = CreateEventW(NULL, TRUE, TRUE, NULL)))
+-    {
+-        CloseHandle(wake);
+-        return FALSE;
+-    }
+-    /* The host already treats NtOS as resident. Make that lifetime explicit
+-     * for direct callers too: no active worker can execute unloaded code.
+-     * PIN is deliberately irreversible until process exit. No DllMain join. */
+-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+-                           (const WCHAR *)deferred_delete_ensure, &module))
+-    {
+-        CloseHandle(drained);
+-        CloseHandle(wake);
+-        return FALSE;
+-    }
+-
+-    /* All inputs are initialized before CreateThread, which can run its entry
+-     * before returning. No further worker startup allocation/handshake. */
+-    wake_event = wake;
+-    drained_event = drained;
+-    if (!(worker = CreateThread(NULL, 0, deferred_worker, NULL, 0, NULL)))
+-    {
+-        wake_event = drained_event = NULL;
+-        CloseHandle(drained);
+-        CloseHandle(wake);
+-        return FALSE;
+-    }
+-    worker_handle = worker;
+-    TRACE("DEFERRED-DELETE executor_ready worker=%p resident_module=%p process_lifetime=1\n", worker_handle, module);
+-    return TRUE;
+-}
+-
+-BOOL deferred_delete_ensure(void)
+-{
+-    return InitOnceExecuteOnce(&init_once, initialize_executor, NULL, NULL);
+-}
+-
+-void deferred_delete_enqueue(struct deferred_delete_entry *entry)
+-{
+-    /* alloc_kernel_object ensures the executor before publishing the body.
+-     * No allocation or work-item submission is needed at final release. */
+-    EnterCriticalSection(&deferred_cs);
+-    list_add_tail(&pending, &entry->entry);
+-    counters.queued++;
+-    counters.accepted++;
+-    if (!ResetEvent(drained_event)) counters.wake_failures++;
+-    if (!SetEvent(wake_event)) counters.wake_failures++;
+-    LeaveCriticalSection(&deferred_cs);
+-}
+-
+-BOOL deferred_delete_idle(struct deferred_delete_stats *stats)
+-{
+-    BOOL idle;
+-    EnterCriticalSection(&deferred_cs);
+-    if (stats) *stats = counters;
+-    idle = !counters.queued && !counters.inflight;
+-    LeaveCriticalSection(&deferred_cs);
+-    return idle;
+-}
+-
+-HANDLE deferred_delete_drain_event(void)
+-{
+-    return drained_event;
+-}
+-
+-#ifdef DEFERRED_NATIVE_TEST
+-/* Native fault fixtures only; the production executor is process-lifetime. */
+-void deferred_delete_test_stop(void)
+-{
+-    EnterCriticalSection(&deferred_cs);
+-    test_stop = TRUE;
+-    LeaveCriticalSection(&deferred_cs);
+-    SetEvent(wake_event);
+-    WaitForSingleObject(worker_handle, INFINITE);
+-    CloseHandle(worker_handle);
+-    CloseHandle(wake_event);
+-    CloseHandle(drained_event);
+-}
+-#endif
+--- a/dlls/ntoskrnl.exe/deferred.h
++++ /dev/null
+@@ -1,22 +0,0 @@
+-/* Private process-lifetime asynchronous object-release executor. */
+-#ifndef __WINE_NTOSKRNL_DEFERRED_H
+-#define __WINE_NTOSKRNL_DEFERRED_H
+-
+-struct deferred_delete_entry
+-{
+-    struct list entry;
+-    BOOL (*consume)(struct deferred_delete_entry *);
+-};
+-
+-struct deferred_delete_stats
+-{
+-    LONG accepted, completed, retries, wake_failures;
+-    unsigned int queued, inflight;
+-};
+-
+-BOOL deferred_delete_ensure(void);
+-void deferred_delete_enqueue(struct deferred_delete_entry *entry);
+-BOOL deferred_delete_idle(struct deferred_delete_stats *stats);
+-HANDLE deferred_delete_drain_event(void);
+-
+-#endif
+--- a/dlls/ntoskrnl.exe/instr.c
++++ b/dlls/ntoskrnl.exe/instr.c
+@@ -922,15 +922,6 @@
+     EXCEPTION_RECORD *record = ptrs->ExceptionRecord;
+     CONTEXT *context = ptrs->ContextRecord;
+ 
+-    /* kernelmode rip: upstream compatibility bridge, preserving DriverInit status. */
+-    if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && (context->Rip & 0x0000800000000000))
+-    {
+-        TRACE( "converting kernelmode rip=%Ix\n", context->Rip );
+-        context->Rip &= 0x00007FFFFFFFFFFF;
+-        TRACE( "resuming on rip=%Ix\n", context->Rip );
+-        return EXCEPTION_CONTINUE_EXECUTION;
+-    }
+-
+     if (record->ExceptionCode == EXCEPTION_PRIV_INSTRUCTION ||
+         (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+          record->ExceptionInformation[0] == EXCEPTION_READ_FAULT))
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -24,7 +24,6 @@
+ #include <assert.h>
+ 
+ #include "ntoskrnl_private.h"
+-#include "deferred.h"
+ #include "excpt.h"
+ #include "winreg.h"
+ #include "ntsecapi.h"
+@@ -35,14 +34,10 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(ntoskrnl);
+ WINE_DECLARE_DEBUG_CHANNEL(relay);
+-WINE_DECLARE_DEBUG_CHANNEL(loaderboundary);
+ 
+ BOOLEAN KdDebuggerEnabled = FALSE;
+ ULONG InitSafeBootMode = 0;
+ USHORT NtBuildNumber = 0;
+-
+-/* Writable only during process attach; exported as the read-only WDK variable. */
+-ULONG_PTR mm_user_probe_address;
+ 
+ extern LONG CALLBACK vectored_handler( EXCEPTION_POINTERS *ptrs );
+ 
+@@ -73,92 +68,6 @@
+ 
+ static HANDLE ntoskrnl_heap;
+ 
+-/* Immutable while this module is loaded. Wine's current CPU topology backend
+- * is a process-lifetime snapshot and does not implement processor hot-add. */
+-static PROCESSOR_NUMBER *processor_index_table;
+-static ULONG processor_index_count;
+-static BOOL processor_index_initialized;
+-
+-static BOOL initialize_processor_index_table(void)
+-{
+-    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info;
+-    const PROCESSOR_GROUP_INFO *group_info;
+-    PROCESSOR_NUMBER *table;
+-    DWORD size = 0;
+-    ULONG count = 0, index = 0;
+-    unsigned int group, number, active;
+-    KAFFINITY mask;
+-
+-    if (GetLogicalProcessorInformationEx( RelationGroup, NULL, &size ) ||
+-        GetLastError() != ERROR_INSUFFICIENT_BUFFER) return FALSE;
+-    if (size < offsetof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Group.GroupInfo))
+-    {
+-        SetLastError( ERROR_INVALID_DATA );
+-        return FALSE;
+-    }
+-    if (!(info = HeapAlloc( GetProcessHeap(), 0, size )))
+-    {
+-        SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+-        return FALSE;
+-    }
+-    if (!GetLogicalProcessorInformationEx( RelationGroup, info, &size ))
+-    {
+-        HeapFree( GetProcessHeap(), 0, info );
+-        return FALSE;
+-    }
+-    if (info->Relationship != RelationGroup || info->Size > size ||
+-        info->Size < offsetof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Group.GroupInfo) ||
+-        !info->Group.ActiveGroupCount || info->Group.ActiveGroupCount > info->Group.MaximumGroupCount ||
+-        info->Group.ActiveGroupCount >
+-        (info->Size - offsetof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Group.GroupInfo)) /
+-        sizeof(PROCESSOR_GROUP_INFO)) goto invalid;
+-
+-    for (group = 0; group < info->Group.ActiveGroupCount; group++)
+-    {
+-        group_info = &info->Group.GroupInfo[group];
+-        if (group_info->MaximumProcessorCount > sizeof(KAFFINITY) * 8 ||
+-            !group_info->ActiveProcessorCount ||
+-            group_info->ActiveProcessorCount > group_info->MaximumProcessorCount) goto invalid;
+-        active = 0;
+-        mask = group_info->ActiveProcessorMask;
+-        for (number = 0; number < sizeof(KAFFINITY) * 8; number++)
+-            if (mask & ((KAFFINITY)1 << number))
+-            {
+-                if (number >= group_info->MaximumProcessorCount) goto invalid;
+-                active++;
+-            }
+-        if (active != group_info->ActiveProcessorCount) goto invalid;
+-        /* ActiveGroupCount is a USHORT and each mask has at most 64 bits:
+-         * at most 65535 * 64 descriptors, so ULONG count/byte size cannot wrap. */
+-        count += active;
+-    }
+-
+-    if (!(table = HeapAlloc( GetProcessHeap(), 0, count * sizeof(*table) )))
+-    {
+-        HeapFree( GetProcessHeap(), 0, info );
+-        SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+-        return FALSE;
+-    }
+-    for (group = 0; group < info->Group.ActiveGroupCount; group++)
+-        for (number = 0; number < sizeof(KAFFINITY) * 8; number++)
+-            if (info->Group.GroupInfo[group].ActiveProcessorMask & ((KAFFINITY)1 << number))
+-            {
+-                table[index].Group = group;
+-                table[index].Number = number;
+-                table[index++].Reserved = 0;
+-            }
+-
+-    HeapFree( GetProcessHeap(), 0, info );
+-    processor_index_table = table;
+-    processor_index_count = count;
+-    return TRUE;
+-
+-invalid:
+-    HeapFree( GetProcessHeap(), 0, info );
+-    SetLastError( ERROR_INVALID_DATA );
+-    return FALSE;
+-}
+-
+ static void *ldr_notify_cookie;
+ 
+ static PLOAD_IMAGE_NOTIFY_ROUTINE load_image_notify_routines[8];
+@@ -171,25 +80,6 @@
+     BOOL async;
+     BOOL complete;
+ };
+-
+-struct driver_object_extension
+-{
+-    struct list entry;
+-    void *client_id;
+-    DECLSPEC_ALIGN(MEMORY_ALLOCATION_ALIGNMENT) unsigned char data[];
+-};
+-
+-DECLARE_CRITICAL_SECTION(driver_extensions_cs);
+-
+-/* The caller holds driver_extensions_cs and a valid driver object reference. */
+-static struct driver_object_extension *find_driver_object_extension( struct wine_driver *driver, void *id )
+-{
+-    struct driver_object_extension *extension;
+-
+-    LIST_FOR_EACH_ENTRY( extension, &driver->object_extensions, struct driver_object_extension, entry )
+-        if (extension->client_id == id) return extension;
+-    return NULL;
+-}
+ 
+ static int wine_drivers_rb_compare( const void *key, const struct wine_rb_entry *entry )
+ {
+@@ -250,27 +140,15 @@
+ }
+ 
+ 
+-struct DECLSPEC_ALIGN(MEMORY_ALLOCATION_ALIGNMENT) object_header
++struct object_header
+ {
+     LONG ref;
+     POBJECT_TYPE type;
+-    struct deferred_delete_entry deferred;
+-    BOOL deferred_pending;
+-    BOOL deferred_server_release;
+ };
+-C_ASSERT(sizeof(struct object_header) % MEMORY_ALLOCATION_ALIGNMENT == 0);
+-
+-static LONG deferred_server_releases, deferred_free_acks;
+-static BOOL consume_deferred_reference(struct deferred_delete_entry *entry);
+ 
+ static void free_kernel_object( void *obj )
+ {
+     struct object_header *header = (struct object_header *)obj - 1;
+-    if (header->deferred_server_release)
+-    {
+-        InterlockedIncrement(&deferred_free_acks);
+-        TRACE("DEFERRED-DELETE server_free_ack object=%p\n", obj);
+-    }
+     HeapFree( GetProcessHeap(), 0, header );
+ }
+ 
+@@ -278,9 +156,6 @@
+ {
+     struct object_header *header;
+ 
+-    /* Never publish an object whose later VOID defer call would need to
+-     * allocate an executor or work item. Initialization can genuinely fail. */
+-    if (size > ~(SIZE_T)0 - sizeof(*header) || !deferred_delete_ensure()) return NULL;
+     if (!(header = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*header) + size)) )
+         return NULL;
+ 
+@@ -300,8 +175,6 @@
+ 
+     header->ref = ref;
+     header->type = type;
+-    list_init(&header->deferred.entry);
+-    header->deferred.consume = consume_deferred_reference;
+     return header + 1;
+ }
+ 
+@@ -344,92 +217,6 @@
+     }
+ 
+     LeaveCriticalSection( &obref_cs );
+-}
+-
+-/* Consume only the executor's independently owned reference. Native type
+- * callbacks run without obref_cs, so they cannot invert that global lock
+- * against a producer-held destructor lock. Server owned-bit transitions stay
+- * serialized with zero-to-one ObReferenceObject calls. */
+-static BOOL consume_deferred_reference(struct deferred_delete_entry *entry)
+-{
+-    struct object_header *header = CONTAINING_RECORD(entry, struct object_header, deferred);
+-    void *obj = header + 1;
+-    void (*release)(void *);
+-    NTSTATUS status;
+-
+-    EnterCriticalSection(&obref_cs);
+-    if (--header->ref)
+-    {
+-        header->deferred_pending = FALSE;
+-        LeaveCriticalSection(&obref_cs);
+-        TRACE("DEFERRED-DELETE pin_consumed retained object=%p\n", obj);
+-        return TRUE;
+-    }
+-
+-    release = header->type->release;
+-    header->deferred_pending = FALSE;
+-    if (release)
+-    {
+-        LeaveCriticalSection(&obref_cs);
+-        TRACE("DEFERRED-DELETE native_release object=%p thread=%lu\n", obj, GetCurrentThreadId());
+-        release(obj);
+-        return TRUE;
+-    }
+-
+-    header->deferred_server_release = TRUE;
+-    SERVER_START_REQ(release_kernel_object)
+-    {
+-        req->manager = wine_server_obj_handle(get_device_manager());
+-        req->user_ptr = wine_server_client_ptr(obj);
+-        status = wine_server_call(req);
+-    }
+-    SERVER_END_REQ;
+-    if (status)
+-    {
+-        /* No successful release was acknowledged. Retain the local queue pin
+-         * without a second server grab. An error does NOT prove server owned
+-         * is still set (INVALID_HANDLE also covers an already-unowned map).
+-         * A persistent/desynchronized backend therefore blocks drain visibly. */
+-        header->ref = 1;
+-        header->deferred_pending = TRUE;
+-        header->deferred_server_release = FALSE;
+-        LeaveCriticalSection(&obref_cs);
+-        ERR("DEFERRED-DELETE server_release_failed object=%p status=%08lx; retained for retry\n", obj, status);
+-        return FALSE;
+-    }
+-    /* dispatch_free may already have freed header. Do not touch it again. */
+-    InterlockedIncrement(&deferred_server_releases);
+-    LeaveCriticalSection(&obref_cs);
+-    TRACE("DEFERRED-DELETE server_release_completed object=%p thread=%lu\n", obj, GetCurrentThreadId());
+-    return TRUE;
+-}
+-
+-/***********************************************************************
+- *           ObDereferenceObjectDeferDelete (NTOSKRNL.EXE.@)
+- */
+-void WINAPI ObDereferenceObjectDeferDelete(void *obj)
+-{
+-    struct object_header *header;
+-    LONG ref;
+-
+-    if (!obj)
+-    {
+-        FIXME("NULL obj\n");
+-        return;
+-    }
+-    header = (struct object_header *)obj - 1;
+-    EnterCriticalSection(&obref_cs);
+-    ref = --header->ref;
+-    TRACE("DEFERRED-DELETE caller_consumed object=%p remaining=%ld thread=%lu\n", obj, ref, GetCurrentThreadId());
+-    if (!ref)
+-    {
+-        /* This is a new, real internal reference. The caller's reference
+-         * was consumed above, not postponed until a worker runs. */
+-        header->ref = 1;
+-        header->deferred_pending = TRUE;
+-        deferred_delete_enqueue(&header->deferred);
+-    }
+-    LeaveCriticalSection(&obref_cs);
+ }
+ 
+ void ObReferenceObject( void *obj )
+@@ -1149,86 +936,6 @@
+     CloseServiceHandle( (void *)service_handle );
+ }
+ 
+-/* Shutdown-only request pump. The executor remains process-lifetime for
+- * direct NtOS callers; this drains accepted pins while the manager can still
+- * acknowledge server FREE messages. Other queued IO is rejected after stop. */
+-static BOOL drain_deferred_deletes(void)
+-{
+-    BYTE initial_buffer[4096];
+-    void *buffer = initial_buffer;
+-    SIZE_T buffer_size = sizeof(initial_buffer);
+-    HANDLE manager = get_device_manager(), previous = NULL;
+-    HANDLE handles[2] = {manager, deferred_delete_drain_event()};
+-    struct deferred_delete_stats stats;
+-    NTSTATUS status, completion = STATUS_SUCCESS;
+-    struct dispatch_context context = {0};
+-    BOOL pump_ok = TRUE;
+-    ULONG input_size;
+-
+-    for (;;)
+-    {
+-        SERVER_START_REQ(get_next_device_request)
+-        {
+-            req->manager = wine_server_obj_handle(manager);
+-            req->prev = wine_server_obj_handle(previous);
+-            req->user_ptr = 0;
+-            req->status = completion;
+-            req->pending = 0;
+-            req->iosb_status = completion;
+-            req->result = 0;
+-            wine_server_set_reply(req, buffer, buffer_size);
+-            status = wine_server_call(req);
+-            input_size = reply->in_size;
+-            if (!status)
+-            {
+-                previous = wine_server_ptr_handle(reply->next);
+-                context.params = reply->params;
+-            }
+-        }
+-        SERVER_END_REQ;
+-        if (!status)
+-        {
+-            if (context.params.type == IRP_CALL_FREE) completion = dispatch_free(&context);
+-            else
+-            {
+-                TRACE("DEFERRED-DELETE stopping_request_rejected type=%u\n", context.params.type);
+-                completion = STATUS_DELETE_PENDING;
+-            }
+-            continue;
+-        }
+-        previous = NULL;
+-        if (status == STATUS_BUFFER_OVERFLOW)
+-        {
+-            void *larger = HeapAlloc(GetProcessHeap(), 0, input_size);
+-            if (!larger)
+-            {
+-                ERR("DEFERRED-DELETE shutdown_pump_allocation_failed size=%lu\n", input_size);
+-                pump_ok = FALSE;
+-                break;
+-            }
+-            if (buffer != initial_buffer) HeapFree(GetProcessHeap(), 0, buffer);
+-            buffer = larger;
+-            buffer_size = input_size;
+-            continue;
+-        }
+-        if (status != STATUS_PENDING)
+-        {
+-            ERR("DEFERRED-DELETE shutdown_pump_failed status=%08lx\n", status);
+-            pump_ok = FALSE;
+-            break;
+-        }
+-        if (deferred_delete_idle(NULL)) break;
+-        if (WaitForMultipleObjects(2, handles, FALSE, 100) == WAIT_FAILED) Sleep(100);
+-    }
+-    /* Even a failed pump is not permission to drop an accepted queue pin. */
+-    while (!deferred_delete_idle(&stats)) Sleep(10);
+-    if (buffer != initial_buffer) HeapFree(GetProcessHeap(), 0, buffer);
+-    TRACE("DEFERRED-DELETE drain queue=%u inflight=%u accepted=%ld completed=%ld retries=%ld wake_failures=%ld pump_ok=%u server_releases=%ld observed_free_acks=%ld body_completion=not_implied_by_queue_drain\n",
+-          stats.queued, stats.inflight, stats.accepted, stats.completed, stats.retries,
+-          stats.wake_failures, pump_ok, deferred_server_releases, deferred_free_acks);
+-    return pump_ok;
+-}
+-
+ PEPROCESS PsInitialSystemProcess = NULL;
+ 
+ /***********************************************************************
+@@ -1241,8 +948,6 @@
+     NTSTATUS status = STATUS_SUCCESS;
+     struct wine_driver *driver;
+     HANDLE handles[2];
+-
+-    if (!deferred_delete_ensure()) return STATUS_NO_MEMORY;
+ 
+     /* Set the system process global before setting up the request thread trickery  */
+     PsInitialSystemProcess = IoGetCurrentProcess();
+@@ -1374,7 +1079,6 @@
+     }
+ 
+ done:
+-    if (!drain_deferred_deletes() && !status) status = STATUS_UNSUCCESSFUL;
+     /* Native PnP drivers expect that all of their devices will be removed when
+      * their unload routine is called. Moreover, we cannot unload a module
+      * until we have removed devices for all lower drivers, so we have to stop
+@@ -1383,7 +1087,6 @@
+         pnp_manager_stop_driver( driver );
+     wine_rb_destroy( &wine_drivers, unload_driver, NULL );
+     pnp_manager_stop();
+-    if (!drain_deferred_deletes() && !status) status = STATUS_UNSUCCESSFUL;
+     return status;
+ }
+ 
+@@ -1395,45 +1098,9 @@
+                                                  ULONG DriverObjectExtensionSize,
+                                                  PVOID *DriverObjectExtension )
+ {
+-    struct wine_driver *driver = (struct wine_driver *)DriverObject;
+-    struct driver_object_extension *extension = NULL;
+-    SIZE_T bytes = DriverObjectExtensionSize ? DriverObjectExtensionSize : 1;
+-    NTSTATUS status = STATUS_SUCCESS;
+-
+-    TRACE( "%p, %p, %lu, %p\n", DriverObject, ClientIdentificationAddress,
+-           DriverObjectExtensionSize, DriverObjectExtension );
+-
+-    if (!DriverObjectExtension) return STATUS_INVALID_PARAMETER;
+-    *DriverObjectExtension = NULL;
+-    if (!DriverObject) return STATUS_INVALID_PARAMETER;
+-    if (bytes > ~(SIZE_T)0 - offsetof(struct driver_object_extension, data))
+-        return STATUS_INSUFFICIENT_RESOURCES;
+-    bytes += offsetof(struct driver_object_extension, data);
+-
+-    EnterCriticalSection( &driver_extensions_cs );
+-    if (find_driver_object_extension( driver, ClientIdentificationAddress ))
+-    {
+-        LeaveCriticalSection( &driver_extensions_cs );
+-        return STATUS_OBJECT_NAME_COLLISION;
+-    }
+-    LeaveCriticalSection( &driver_extensions_cs );
+-
+-    /* Do not serialize unrelated drivers on a host heap allocation. */
+-    if (!(extension = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, bytes )))
+-        return STATUS_INSUFFICIENT_RESOURCES;
+-    extension->client_id = ClientIdentificationAddress;
+-
+-    EnterCriticalSection( &driver_extensions_cs );
+-    if (find_driver_object_extension( driver, ClientIdentificationAddress ))
+-        status = STATUS_OBJECT_NAME_COLLISION;
+-    else
+-    {
+-        list_add_tail( &driver->object_extensions, &extension->entry );
+-        *DriverObjectExtension = extension->data;
+-    }
+-    LeaveCriticalSection( &driver_extensions_cs );
+-    if (status) HeapFree( GetProcessHeap(), 0, extension );
+-    return status;
++    FIXME( "stub: %p, %p, %lu, %p\n", DriverObject, ClientIdentificationAddress,
++            DriverObjectExtensionSize, DriverObjectExtension );
++    return STATUS_NOT_IMPLEMENTED;
+ }
+ 
+ 
+@@ -1443,16 +1110,8 @@
+ PVOID WINAPI IoGetDriverObjectExtension( PDRIVER_OBJECT DriverObject,
+                                          PVOID ClientIdentificationAddress )
+ {
+-    struct wine_driver *driver = (struct wine_driver *)DriverObject;
+-    struct driver_object_extension *extension;
+-    void *ret = NULL;
+-
+-    TRACE( "%p, %p\n", DriverObject, ClientIdentificationAddress );
+-    if (!driver) return NULL;
+-    EnterCriticalSection( &driver_extensions_cs );
+-    if ((extension = find_driver_object_extension( driver, ClientIdentificationAddress ))) ret = extension->data;
+-    LeaveCriticalSection( &driver_extensions_cs );
+-    return ret;
++    FIXME( "stub: %p, %p\n", DriverObject, ClientIdentificationAddress );
++    return NULL;
+ }
+ 
+ 
+@@ -1574,235 +1233,6 @@
+ }
+ 
+ 
+-/* A locked shared-section MDL owns a pinned backing view independently of
+- * its optional system mapping and of the caller's original section view. */
+-struct mdl_section_view
+-{
+-    struct list entry;
+-    void *base;
+-    SIZE_T size;
+-    LARGE_INTEGER offset;
+-    HANDLE section;
+-    unsigned int refs;
+-};
+-
+-struct mdl_section_lock
+-{
+-    struct list entry;
+-    MDL *mdl;
+-    struct mdl_section_view *view;
+-    void *pin, *locked_base, *mapping;
+-    SIZE_T size, locked_size, delta;
+-    LARGE_INTEGER offset;
+-    ULONG protect;
+-};
+-
+-static struct list mdl_section_views = LIST_INIT( mdl_section_views );
+-static struct list mdl_section_locks = LIST_INIT( mdl_section_locks );
+-DECLARE_CRITICAL_SECTION(mdl_section_cs);
+-
+-static void release_mdl_section_view( struct mdl_section_view *view )
+-{
+-    if (--view->refs) return;
+-    NtClose( view->section );
+-    free( view );
+-}
+-
+-static struct mdl_section_lock *find_mdl_section_lock( MDL *mdl )
+-{
+-    struct mdl_section_lock *lock;
+-    LIST_FOR_EACH_ENTRY( lock, &mdl_section_locks, struct mdl_section_lock, entry )
+-        if (lock->mdl == mdl) return lock;
+-    return NULL;
+-}
+-
+-static void unmap_mdl_section_lock( struct mdl_section_lock *lock )
+-{
+-    if (lock->mapping) NtUnmapViewOfSection( GetCurrentProcess(), lock->mapping );
+-    lock->mapping = NULL;
+-    lock->mdl->MappedSystemVa = NULL;
+-    lock->mdl->MdlFlags &= ~MDL_MAPPED_TO_SYSTEM_VA;
+-}
+-
+-static void release_mdl_section_lock( MDL *mdl )
+-{
+-    struct mdl_section_lock *lock;
+-
+-    EnterCriticalSection( &mdl_section_cs );
+-    if ((lock = find_mdl_section_lock( mdl )))
+-    {
+-        unmap_mdl_section_lock( lock );
+-        NtUnlockVirtualMemory( GetCurrentProcess(), &lock->locked_base, &lock->locked_size, 1 );
+-        NtUnmapViewOfSection( GetCurrentProcess(), lock->pin );
+-        list_remove( &lock->entry );
+-        release_mdl_section_view( lock->view );
+-        free( lock );
+-        mdl->MdlFlags &= ~MDL_PAGES_LOCKED;
+-    }
+-    LeaveCriticalSection( &mdl_section_cs );
+-}
+-
+-NTSTATUS WINAPI ZwMapViewOfSection( HANDLE section, HANDLE process, void **base, ULONG zero_bits,
+-                                   SIZE_T commit, const LARGE_INTEGER *offset, SIZE_T *size,
+-                                   SECTION_INHERIT inherit, ULONG alloc, ULONG protect )
+-{
+-    struct mdl_section_view *view;
+-    MEMORY_BASIC_INFORMATION info;
+-    NTSTATUS status;
+-
+-    /* Other process mappings and non-shared protections retain their existing path. */
+-    if (process != GetCurrentProcess() || (protect != PAGE_READONLY && protect != PAGE_READWRITE))
+-        return NtMapViewOfSection( section, process, base, zero_bits, commit, offset, size, inherit, alloc, protect );
+-
+-    EnterCriticalSection( &mdl_section_cs );
+-    status = NtMapViewOfSection( section, process, base, zero_bits, commit, offset, size, inherit, alloc, protect );
+-    if (status) goto done;
+-    if (!VirtualQuery( *base, &info, sizeof(info) ) || info.Type != MEM_MAPPED) goto done;
+-
+-    if (!(view = calloc( 1, sizeof(*view) ))) status = STATUS_NO_MEMORY;
+-    else
+-    {
+-        status = NtDuplicateObject( GetCurrentProcess(), section, GetCurrentProcess(),
+-                                    &view->section, 0, 0, DUPLICATE_SAME_ACCESS );
+-        if (!status)
+-        {
+-            view->base = *base;
+-            view->size = *size;
+-            if (offset) view->offset = *offset;
+-            view->refs = 1;
+-            list_add_tail( &mdl_section_views, &view->entry );
+-            TRACE( "MDL section view %p size %Iu section %p\n", view->base, view->size, view->section );
+-            goto done;
+-        }
+-        free( view );
+-    }
+-    NtUnmapViewOfSection( process, *base );
+-done:
+-    LeaveCriticalSection( &mdl_section_cs );
+-    return status;
+-}
+-
+-NTSTATUS WINAPI ZwUnmapViewOfSection( HANDLE process, void *base )
+-{
+-    struct mdl_section_view *view;
+-    NTSTATUS status;
+-
+-    if (process != GetCurrentProcess()) return NtUnmapViewOfSection( process, base );
+-    EnterCriticalSection( &mdl_section_cs );
+-    status = NtUnmapViewOfSection( process, base );
+-    if (!status)
+-    {
+-        LIST_FOR_EACH_ENTRY( view, &mdl_section_views, struct mdl_section_view, entry )
+-        {
+-            if ((ULONG_PTR)base < (ULONG_PTR)view->base || (ULONG_PTR)base - (ULONG_PTR)view->base >= view->size)
+-                continue;
+-            list_remove( &view->entry );
+-            release_mdl_section_view( view );
+-            break;
+-        }
+-    }
+-    LeaveCriticalSection( &mdl_section_cs );
+-    return status;
+-}
+-
+-static NTSTATUS probe_mdl_section( MDL *mdl, LOCK_OPERATION operation )
+-{
+-    struct mdl_section_view *view;
+-    struct mdl_section_lock *lock;
+-    MEMORY_BASIC_INFORMATION info;
+-    void *address = (char *)mdl->StartVa + mdl->ByteOffset;
+-    SIZE_T relative, start, pos, remaining = mdl->ByteCount;
+-    NTSTATUS status = STATUS_SUCCESS;
+-
+-    EnterCriticalSection( &mdl_section_cs );
+-    LIST_FOR_EACH_ENTRY( view, &mdl_section_views, struct mdl_section_view, entry )
+-    {
+-        if ((ULONG_PTR)address < (ULONG_PTR)view->base) continue;
+-        relative = (ULONG_PTR)address - (ULONG_PTR)view->base;
+-        if (relative >= view->size) continue;
+-        if (remaining > view->size - relative)
+-        {
+-            status = STATUS_ACCESS_VIOLATION;
+-            goto done;
+-        }
+-
+-        for (pos = 0; pos < remaining; )
+-        {
+-            ULONG protect;
+-            if (!VirtualQuery( (char *)address + pos, &info, sizeof(info) ) ||
+-                info.AllocationBase != view->base || info.State != MEM_COMMIT || info.Type != MEM_MAPPED)
+-            {
+-                status = STATUS_ACCESS_VIOLATION;
+-                goto done;
+-            }
+-            protect = info.Protect;
+-            if (protect != PAGE_READWRITE && (protect != PAGE_READONLY || operation != IoReadAccess))
+-            {
+-                status = STATUS_ACCESS_VIOLATION;
+-                goto done;
+-            }
+-            pos = (char *)info.BaseAddress + info.RegionSize - (char *)address;
+-        }
+-        if (!(lock = calloc( 1, sizeof(*lock) )))
+-        {
+-            status = STATUS_NO_MEMORY;
+-            goto done;
+-        }
+-        /* Section offsets use allocation granularity, while the locked range
+-         * is just the MDL's page span within that view. */
+-        start = relative & ~(SIZE_T)0xffff;
+-        lock->delta = relative - start;
+-        lock->size = (lock->delta + remaining + PAGE_SIZE - 1) & ~(SIZE_T)(PAGE_SIZE - 1);
+-        lock->offset.QuadPart = view->offset.QuadPart + start;
+-        lock->protect = operation == IoReadAccess ? PAGE_READONLY : PAGE_READWRITE;
+-        status = NtMapViewOfSection( view->section, GetCurrentProcess(), &lock->pin, 0, 0,
+-                                    &lock->offset, &lock->size, ViewUnmap, 0, lock->protect );
+-        if (status) goto failed;
+-        lock->locked_base = (char *)lock->pin + lock->delta;
+-        lock->locked_size = remaining;
+-        status = NtLockVirtualMemory( GetCurrentProcess(), &lock->locked_base, &lock->locked_size, 1 );
+-        if (status)
+-        {
+-            NtUnmapViewOfSection( GetCurrentProcess(), lock->pin );
+-            goto failed;
+-        }
+-        lock->mdl = mdl;
+-        lock->view = view;
+-        view->refs++;
+-        list_add_tail( &mdl_section_locks, &lock->entry );
+-        TRACE( "MDL locked %p source %p pin %p size %Iu\n", mdl, address, lock->pin, remaining );
+-        goto done;
+-failed:
+-        free( lock );
+-        goto done;
+-    }
+-done:
+-    LeaveCriticalSection( &mdl_section_cs );
+-    return status;
+-}
+-
+-static void *map_mdl_section( struct mdl_section_lock *lock )
+-{
+-    SIZE_T size = lock->size;
+-    NTSTATUS status;
+-
+-    if (!lock->mapping)
+-    {
+-        status = NtMapViewOfSection( lock->view->section, GetCurrentProcess(), &lock->mapping, 0, 0,
+-                                    &lock->offset, &size, ViewUnmap, 0, lock->protect );
+-        if (status)
+-        {
+-            TRACE( "MDL map %p failed %#lx\n", lock->mdl, status );
+-            return NULL;
+-        }
+-    }
+-    lock->mdl->MappedSystemVa = (char *)lock->mapping + lock->delta;
+-    lock->mdl->MdlFlags |= MDL_MAPPED_TO_SYSTEM_VA;
+-    TRACE( "MDL alias %p -> %p\n", lock->mdl, lock->mdl->MappedSystemVa );
+-    return lock->mdl->MappedSystemVa;
+-}
+-
+-
+ /***********************************************************************
+  *           IoAllocateMdl  (NTOSKRNL.EXE.@)
+  */
+@@ -1846,7 +1276,6 @@
+ void WINAPI IoFreeMdl(PMDL mdl)
+ {
+     TRACE("%p\n", mdl);
+-    release_mdl_section_lock( mdl );
+     HeapFree(GetProcessHeap(), 0, mdl);
+ }
+ 
+@@ -2081,7 +1510,7 @@
+     return irp;
+ }
+ 
+-static BOOLEAN build_driver_keypath( const WCHAR *name, UNICODE_STRING *keypath )
++static void build_driver_keypath( const WCHAR *name, UNICODE_STRING *keypath )
+ {
+     static const WCHAR driverW[] = {'\\','D','r','i','v','e','r','\\',0};
+     WCHAR *str;
+@@ -2090,19 +1519,18 @@
+     if (wcsncmp( name, servicesW, lstrlenW(servicesW) ) == 0)
+     {
+         FIXME( "Driver name %s is malformed as the keypath\n", debugstr_w(name) );
+-        return RtlCreateUnicodeString( keypath, name );
++        RtlCreateUnicodeString( keypath, name );
++        return;
+     }
+     if (wcsncmp( name, driverW, lstrlenW(driverW) ) == 0)
+         name += lstrlenW(driverW);
+     else
+         FIXME( "Driver name %s does not properly begin with \\Driver\\\n", debugstr_w(name) );
+ 
+-    if (!(str = HeapAlloc( GetProcessHeap(), 0, sizeof(servicesW) + lstrlenW(name)*sizeof(WCHAR))))
+-        return FALSE;
++    str = HeapAlloc( GetProcessHeap(), 0, sizeof(servicesW) + lstrlenW(name)*sizeof(WCHAR));
+     lstrcpyW( str, servicesW );
+     lstrcatW( str, name );
+     RtlInitUnicodeString( keypath, str );
+-    return TRUE;
+ }
+ 
+ 
+@@ -2118,20 +1546,8 @@
+ static void free_driver_object( void *obj )
+ {
+     struct wine_driver *driver = obj;
+-    struct driver_object_extension *extension, *next;
+-    struct list extensions = LIST_INIT(extensions);
+-
+-    EnterCriticalSection( &driver_extensions_cs );
+-    list_move_tail( &extensions, &driver->object_extensions );
+-    LeaveCriticalSection( &driver_extensions_cs );
+-    LIST_FOR_EACH_ENTRY_SAFE( extension, next, &extensions, struct driver_object_extension, entry )
+-    {
+-        list_remove( &extension->entry );
+-        HeapFree( GetProcessHeap(), 0, extension );
+-    }
+     RtlFreeUnicodeString( &driver->driver_obj.DriverName );
+     RtlFreeUnicodeString( &driver->driver_obj.DriverExtension->ServiceKeyName );
+-    RtlFreeUnicodeString( &driver->registry_path );
+     free_kernel_object( driver );
+ }
+ 
+@@ -2152,13 +1568,7 @@
+  */
+ NTSTATUS WINAPI IoCreateDriver( UNICODE_STRING *name, PDRIVER_INITIALIZE init )
+ {
+-    static const WCHAR hardware_path[] = L"\\Registry\\Machine\\Hardware";
+-    static const UNICODE_STRING hardware_database =
+-    {
+-        sizeof(hardware_path) - sizeof(WCHAR), sizeof(hardware_path), (WCHAR *)hardware_path
+-    };
+     struct wine_driver *driver;
+-    const WCHAR *key_name;
+     NTSTATUS status;
+     unsigned int i;
+ 
+@@ -2167,8 +1577,6 @@
+     if (!(driver = alloc_kernel_object( IoDriverObjectType, NULL, sizeof(*driver), 1 )))
+         return STATUS_NO_MEMORY;
+ 
+-    list_init( &driver->object_extensions );
+-
+     if ((status = RtlDuplicateUnicodeString( 1, name, &driver->driver_obj.DriverName )))
+     {
+         free_kernel_object( driver );
+@@ -2177,22 +1585,9 @@
+ 
+     driver->driver_obj.Size            = sizeof(driver->driver_obj);
+     driver->driver_obj.DriverInit      = init;
+-    /* DriverEntry receives read-only hardware registry metadata. */
+-    driver->driver_obj.HardwareDatabase = (UNICODE_STRING *)&hardware_database;
+     driver->driver_obj.DriverExtension = &driver->driver_extension;
+     driver->driver_extension.DriverObject   = &driver->driver_obj;
+-    if (!build_driver_keypath( driver->driver_obj.DriverName.Buffer, &driver->registry_path ))
+-    {
+-        free_driver_object( driver );
+-        return STATUS_NO_MEMORY;
+-    }
+-    if ((key_name = wcsrchr( driver->registry_path.Buffer, '\\' ))) key_name++;
+-    else key_name = driver->registry_path.Buffer;
+-    if (!RtlCreateUnicodeString( &driver->driver_extension.ServiceKeyName, key_name ))
+-    {
+-        free_driver_object( driver );
+-        return STATUS_NO_MEMORY;
+-    }
++    build_driver_keypath( driver->driver_obj.DriverName.Buffer, &driver->driver_extension.ServiceKeyName );
+     for (i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
+         driver->driver_obj.MajorFunction[i] = unhandled_irp;
+     list_init( &driver->root_pnp_devices );
+@@ -2202,7 +1597,7 @@
+         ERR( "failed to insert driver %s in tree\n", debugstr_us(name) );
+     LeaveCriticalSection( &drivers_cs );
+ 
+-    status = driver->driver_obj.DriverInit( &driver->driver_obj, &driver->registry_path );
++    status = driver->driver_obj.DriverInit( &driver->driver_obj, &driver->driver_extension.ServiceKeyName );
+     if (status)
+     {
+         IoDeleteDriver( &driver->driver_obj );
+@@ -3123,51 +2518,23 @@
+     UNICODE_STRING *path;
+     ANSI_STRING name;
+     KERNEL_USER_TIMES times;
+-    PROCESS_BASIC_INFORMATION info;
+-    HANDLE query_handle;
+-    NTSTATUS status;
+-
+-    /* Duplicate the same real object with a private query handle. Asking for
+-     * additional access goes through the server's normal access checks; the
+-     * caller's handle and its granted access are unchanged. Do not reopen by
+-     * PID, which could select a different process after PID reuse. */
+-    status = NtDuplicateObject( GetCurrentProcess(), handle, GetCurrentProcess(),
+-                                &query_handle, PROCESS_QUERY_LIMITED_INFORMATION, 0, 0 );
+-    if (status)
+-    {
+-        TRACE( "Cannot obtain process metadata query handle, status %#lx\n", status );
+-        return NULL;
+-    }
+-    status = NtQueryInformationProcess( query_handle, ProcessBasicInformation, &info, sizeof(info), NULL );
+-    if (status)
+-    {
+-        TRACE( "Cannot query process identity, status %#lx\n", status );
+-        NtClose( query_handle );
+-        return NULL;
+-    }
+-
+-    /* Do not publish a pointer while the identity is unknown or the body is
+-     * still being initialized. Optional metadata keeps its existing defaults. */
+-    if (!(process = alloc_kernel_object( PsProcessType, NULL, sizeof(*process), 0 )))
+-    {
+-        NtClose( query_handle );
+-        return NULL;
+-    }
++
++    if (!(process = alloc_kernel_object( PsProcessType, handle, sizeof(*process), 0 ))) return NULL;
+ 
+     process->header.Type = 3;
+     process->header.WaitListHead.Blink = INVALID_HANDLE_VALUE; /* mark as kernel object */
+-    process->info = info;
+-    IsWow64Process( query_handle, &process->wow64 );
++    NtQueryInformationProcess( handle, ProcessBasicInformation, &process->info, sizeof(process->info), NULL );
++    IsWow64Process( handle, &process->wow64 );
+     process->session_id = 0;
+-    NtQueryInformationProcess( query_handle, ProcessSessionInformation, &process->session_id, sizeof(process->session_id), NULL );
++    NtQueryInformationProcess( handle, ProcessSessionInformation, &process->session_id, sizeof(process->session_id), NULL );
+     process->create_time.QuadPart = 0;
+-    if (!NtQueryInformationProcess( query_handle, ProcessTimes, &times, sizeof(times), NULL ))
++    if (!NtQueryInformationProcess( handle, ProcessTimes, &times, sizeof(times), NULL ))
+         process->create_time = times.CreateTime;
+     memset( process->image_name, 0, sizeof(process->image_name) );
+-    NtQueryInformationProcess( query_handle, ProcessImageFileName, NULL, 0, &length );
++    NtQueryInformationProcess( handle, ProcessImageFileName, NULL, 0, &length );
+     if (length >= sizeof(*path) && (path = malloc( length )))
+     {
+-        if (!NtQueryInformationProcess( query_handle, ProcessImageFileName, path, length, NULL ))
++        if (!NtQueryInformationProcess( handle, ProcessImageFileName, path, length, NULL ))
+         {
+             UNICODE_STRING base = *path;
+             unsigned int i;
+@@ -3186,34 +2553,7 @@
+         }
+         free( path );
+     }
+-    /* Register through the same query handle that supplied the metadata;
+-     * do not resolve the original numeric handle a second time. */
+-    SERVER_START_REQ( set_kernel_object_ptr )
+-    {
+-        req->manager  = wine_server_obj_handle( get_device_manager() );
+-        req->handle   = wine_server_obj_handle( query_handle );
+-        req->user_ptr = wine_server_client_ptr( process );
+-        status = wine_server_call( req );
+-    }
+-    SERVER_END_REQ;
+-    NtClose( query_handle );
+-    if (status)
+-    {
+-        TRACE( "Cannot publish process object, status %#lx\n", status );
+-        free_kernel_object( process );
+-        return NULL;
+-    }
+-    TRACE( "Process metadata initialized, pid %Ix\n", info.UniqueProcessId );
+     return process;
+-}
+-
+-/*********************************************************************
+- *           PsGetProcessPeb    (NTOSKRNL.@)
+- */
+-PEB *WINAPI PsGetProcessPeb( PEPROCESS process )
+-{
+-    TRACE( "%p -> %p\n", process, process->info.PebBaseAddress );
+-    return process->info.PebBaseAddress;
+ }
+ 
+ char *WINAPI PsGetProcessImageFileName( PEPROCESS process )
+@@ -3279,64 +2619,17 @@
+     return process->create_time.QuadPart;
+ }
+ 
+-/* Registration is independent of dump creation. Wine currently has no kernel
+- * crash-dump writer, so these records are not dispatched by KeBugCheckEx.
+- * In particular, do not invent SecondaryDumpData buffers on process exit. */
+-static LIST_ENTRY bugcheck_reason_callbacks = { &bugcheck_reason_callbacks, &bugcheck_reason_callbacks };
+-DECLARE_CRITICAL_SECTION(bugcheck_reason_cs);
+-
+-BOOLEAN WINAPI KeRegisterBugCheckReasonCallback( KBUGCHECK_REASON_CALLBACK_RECORD *record,
+-        PKBUGCHECK_REASON_CALLBACK_ROUTINE callback, KBUGCHECK_CALLBACK_REASON reason, UCHAR *component )
+-{
+-    LIST_ENTRY *entry;
+-    BOOLEAN ret = FALSE;
+-
+-    TRACE( "%p %p %u %s\n", record, callback, reason, debugstr_a((char *)component) );
+-    if (!record || !callback || reason < KbCallbackSecondaryDumpData || reason > KbCallbackTriageDumpData)
+-    {
+-        TRACE( "record %p reason %u -> 0\n", record, reason );
+-        return FALSE;
+-    }
+-
+-    EnterCriticalSection( &bugcheck_reason_cs );
+-    for (entry = bugcheck_reason_callbacks.Flink; entry != &bugcheck_reason_callbacks; entry = entry->Flink)
+-        if (entry == &record->Entry) goto done;
+-    if (record->State != BufferEmpty) goto done;
+-
+-    record->CallbackRoutine = callback;
+-    record->Component = component;
+-    record->Checksum = 0; /* No dump serialization/checksum consumer in Wine. */
+-    record->Reason = reason;
+-    InsertTailList( &bugcheck_reason_callbacks, &record->Entry );
+-    record->State = BufferInserted;
+-    ret = TRUE;
+-done:
+-    LeaveCriticalSection( &bugcheck_reason_cs );
+-    TRACE( "record %p reason %u -> %u\n", record, reason, ret );
+-    return ret;
+-}
+-
+-BOOLEAN WINAPI KeDeregisterBugCheckReasonCallback( KBUGCHECK_REASON_CALLBACK_RECORD *record )
+-{
+-    LIST_ENTRY *entry;
+-    BOOLEAN ret = FALSE;
+-
+-    TRACE( "%p\n", record );
+-    if (!record) return FALSE;
+-
+-    EnterCriticalSection( &bugcheck_reason_cs );
+-    for (entry = bugcheck_reason_callbacks.Flink; entry != &bugcheck_reason_callbacks; entry = entry->Flink)
+-        if (entry == &record->Entry)
+-        {
+-            RemoveEntryList( entry );
+-            InitializeListHead( entry );
+-            record->State = BufferEmpty;
+-            ret = TRUE;
+-            break;
+-        }
+-    LeaveCriticalSection( &bugcheck_reason_cs );
+-    TRACE( "record %p -> %u\n", record, ret );
+-    return ret;
++/* Wine has no Windows kernel bugcheck callback dispatcher. Report that
++ * registration is unsupported instead of aborting on an unimplemented export. */
++BOOLEAN WINAPI KeRegisterBugCheckReasonCallback( void *record, void *callback, ULONG reason, char *component )
++{
++    FIXME("unsupported bugcheck callback %p %p %lu %s\n", record, callback, reason, debugstr_a(component));
++    return FALSE;
++}
++
++BOOLEAN WINAPI KeDeregisterBugCheckReasonCallback( void *record )
++{
++    return FALSE;
+ }
+ 
+ BOOLEAN WINAPI KeRegisterBugCheckCallback( void *record, void *callback, void *buffer, ULONG length, char *component )
+@@ -3451,12 +2744,10 @@
+     thread->header.Type = 6;
+     thread->header.WaitListHead.Blink = INVALID_HANDLE_VALUE; /* mark as kernel object */
+     thread->user_affinity = 0;
+-    thread->teb = NULL;
+ 
+     if (!NtQueryInformationThread( handle, ThreadBasicInformation, &info, sizeof(info), NULL ))
+     {
+         thread->id = info.ClientId;
+-        thread->teb = info.TebBaseAddress;
+         if ((process = OpenProcess( PROCESS_QUERY_INFORMATION, FALSE, HandleToUlong(thread->id.UniqueProcess) )))
+         {
+             kernel_object_from_handle( process, PsProcessType, (void**)&thread->process );
+@@ -3545,41 +2836,16 @@
+     return thread->kthread.id.UniqueProcess;
+ }
+ 
+-NTSTATUS WINAPI get_context_thread( PETHREAD thread, CONTEXT *context, KPROCESSOR_MODE mode )
++NTSTATUS WINAPI PsGetContextThread( PETHREAD thread, CONTEXT *context )
+ {
+     HANDLE handle;
+     NTSTATUS status;
+-
+-    TRACE( "%p %p %u\n", thread, context, mode );
+-    if (mode == KernelMode) return STATUS_UNSUCCESSFUL;
+-
+     if ((status = ObOpenObjectByPointer( thread, 0, NULL, THREAD_GET_CONTEXT,
+                                         PsThreadType, KernelMode, &handle ))) return status;
+     status = NtGetContextThread( handle, context );
+     NtClose( handle );
+     return status;
+ }
+-
+-/*********************************************************************
+- *           PsGetContextThread    (NTOSKRNL.@)
+- */
+-#ifdef __x86_64__
+-__ASM_GLOBAL_FUNC( PsGetContextThread,
+-                   "subq $0x28,%rsp\n\t"
+-                   __ASM_SEH(".seh_stackalloc 0x28\n\t")
+-                   __ASM_SEH(".seh_endprologue\n\t")
+-                   __ASM_CFI(".cfi_adjust_cfa_offset 0x28\n\t")
+-                   "call " __ASM_NAME("get_context_thread") "\n\t"
+-                   "addq $0x28,%rsp\n\t"
+-                   __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
+-                   "ret" )
+-#else
+-NTSTATUS WINAPI PsGetContextThread( PETHREAD thread, CONTEXT *context, KPROCESSOR_MODE mode )
+-{
+-    return get_context_thread( thread, context, mode );
+-}
+-#endif
+-
+ 
+ /***********************************************************************
+  *           KeInsertQueue   (NTOSKRNL.EXE.@)
+@@ -3623,39 +2889,6 @@
+     return GetActiveProcessorCount(group_number);
+ }
+ 
+-/***********************************************************************
+- *           KeGetProcessorNumberFromIndex   (NTOSKRNL.EXE.@)
+- */
+-NTSTATUS WINAPI KeGetProcessorNumberFromIndex( ULONG index, PROCESSOR_NUMBER *number )
+-{
+-    /* Callable at any IRQL: no allocation, locks, waits or scheduler changes.
+-     * The output pointer is required. Invalid caller memory is not suppressed. */
+-    if (index >= processor_index_count) return STATUS_INVALID_PARAMETER;
+-    *number = processor_index_table[index];
+-    return STATUS_SUCCESS;
+-}
+-
+-/***********************************************************************
+- *           KeGetProcessorIndexFromNumber   (NTOSKRNL.EXE.@)
+- */
+-ULONG WINAPI KeGetProcessorIndexFromNumber( const PROCESSOR_NUMBER *number )
+-{
+-    const USHORT group = number->Group;
+-    const UCHAR processor = number->Number;
+-    ULONG index;
+-
+-    if (number->Reserved) return ~0u; /* INVALID_PROCESSOR_INDEX */
+-
+-    /* Use the same immutable topology as the inverse mapping. No allocation,
+-     * locks or affinity changes are needed, including for sparse group masks.
+-     * The input pointer is required. */
+-    for (index = 0; index < processor_index_count; index++)
+-        if (processor_index_table[index].Group == group &&
+-            processor_index_table[index].Number == processor) return index;
+-
+-    return ~0u; /* INVALID_PROCESSOR_INDEX */
+-}
+-
+ ULONG WINAPI KeQueryActiveProcessorCount(PKAFFINITY active_processors)
+ {
+     TRACE("active_processors %p.\n", active_processors);
+@@ -3674,27 +2907,10 @@
+  */
+ ULONGLONG WINAPI KeQueryInterruptTime( void )
+ {
+-    const KUSER_SHARED_DATA *shared_data = (const KUSER_SHARED_DATA *)0x7ffe0000;
+-    LARGE_INTEGER counter, frequency;
+-    ULONG high, low;
+-
+-    /* Wine's NTDLL and server use the same sleep-biased monotonic clock.
+-     * Read it directly at its verified 100-nanosecond frequency, avoiding
+-     * the server-updated shared page's idle-poll lag. Do not assume that
+-     * an arbitrary performance-counter frequency is already in this unit. */
+-    if (NtQueryPerformanceCounter( &counter, &frequency ) == STATUS_SUCCESS &&
+-        frequency.QuadPart == 10000000)
+-        return counter.QuadPart;
+-
+-    /* Fall back to the actual shared interrupt clock if that backend is
+-     * unavailable or has a different frequency. Retry a torn shared read. */
+-    do
+-    {
+-        high = shared_data->InterruptTime.High1Time;
+-        low = shared_data->InterruptTime.LowPart;
+-    }
+-    while (high != shared_data->InterruptTime.High2Time);
+-    return (ULONGLONG)high << 32 | low;
++    LARGE_INTEGER totaltime;
++
++    KeQueryTickCount(&totaltime);
++    return totaltime.QuadPart;
+ }
+ 
+ /***********************************************************************
+@@ -3887,10 +3103,7 @@
+  */
+ void WINAPI MmBuildMdlForNonPagedPool(MDL *mdl)
+ {
+-    TRACE("%p\n", mdl);
+-
+-    mdl->MdlFlags |= MDL_SOURCE_IS_NONPAGED_POOL;
+-    mdl->MappedSystemVa = (char *)mdl->StartVa + mdl->ByteOffset;
++    FIXME("stub: %p\n", mdl);
+ }
+ 
+ /***********************************************************************
+@@ -3974,19 +3187,8 @@
+  */
+ PVOID WINAPI MmMapLockedPages( MDL *mdl, KPROCESSOR_MODE mode )
+ {
+-    struct mdl_section_lock *lock;
+-    void *mapping;
+-
+     TRACE( "%p %u\n", mdl, mode );
+ 
+-    EnterCriticalSection( &mdl_section_cs );
+-    if ((lock = find_mdl_section_lock( mdl )))
+-    {
+-        mapping = mode == KernelMode ? map_mdl_section( lock ) : NULL;
+-        LeaveCriticalSection( &mdl_section_cs );
+-        return mapping;
+-    }
+-    LeaveCriticalSection( &mdl_section_cs );
+     mdl->MdlFlags |= MDL_MAPPED_TO_SYSTEM_VA;
+     mdl->MappedSystemVa = (char *)mdl->StartVa + mdl->ByteOffset;
+     return mdl->MappedSystemVa;
+@@ -3998,12 +3200,9 @@
+ PVOID WINAPI  MmMapLockedPagesSpecifyCache(PMDLX MemoryDescriptorList, KPROCESSOR_MODE AccessMode, MEMORY_CACHING_TYPE CacheType,
+                                            PVOID BaseAddress, ULONG BugCheckOnFailure, MM_PAGE_PRIORITY Priority)
+ {
+-    TRACE("(%p, %u, %u, %p, %lu, %u)\n", MemoryDescriptorList, AccessMode, CacheType,
+-          BaseAddress, BugCheckOnFailure, Priority);
+-
+-    if (BaseAddress) FIXME("requested base address %p ignored\n", BaseAddress);
+-
+-    return MmMapLockedPages( MemoryDescriptorList, AccessMode );
++    FIXME("(%p, %u, %u, %p, %lu, %u): stub\n", MemoryDescriptorList, AccessMode, CacheType, BaseAddress, BugCheckOnFailure, Priority);
++
++    return NULL;
+ }
+ 
+ /***********************************************************************
+@@ -4011,14 +3210,7 @@
+  */
+ void WINAPI MmUnmapLockedPages( void *base, MDL *mdl )
+ {
+-    struct mdl_section_lock *lock;
+-
+-    TRACE( "%p %p\n", base, mdl );
+-
+-    EnterCriticalSection( &mdl_section_cs );
+-    if ((lock = find_mdl_section_lock( mdl ))) unmap_mdl_section_lock( lock );
+-    LeaveCriticalSection( &mdl_section_cs );
+-    mdl->MdlFlags &= ~MDL_MAPPED_TO_SYSTEM_VA;
++    FIXME( "(%p %p_\n", base, mdl );
+ }
+ 
+ /***********************************************************************
+@@ -4044,12 +3236,7 @@
+  */
+ void WINAPI MmProbeAndLockPages(PMDLX MemoryDescriptorList, KPROCESSOR_MODE AccessMode, LOCK_OPERATION Operation)
+ {
+-    NTSTATUS status;
+-
+-    TRACE("(%p, %u, %u)\n", MemoryDescriptorList, AccessMode, Operation);
+-
+-    if ((status = probe_mdl_section( MemoryDescriptorList, Operation ))) RtlRaiseStatus( status );
+-    MemoryDescriptorList->MdlFlags |= MDL_PAGES_LOCKED;
++    FIXME("(%p, %u, %u): stub\n", MemoryDescriptorList, AccessMode, Operation);
+ }
+ 
+ 
+@@ -4067,10 +3254,7 @@
+  */
+ void WINAPI  MmUnlockPages(PMDLX MemoryDescriptorList)
+ {
+-    TRACE("(%p)\n", MemoryDescriptorList);
+-
+-    release_mdl_section_lock( MemoryDescriptorList );
+-    MemoryDescriptorList->MdlFlags &= ~MDL_PAGES_LOCKED;
++    FIXME("(%p): stub\n", MemoryDescriptorList);
+ }
+ 
+ 
+@@ -4279,17 +3463,6 @@
+ BOOLEAN WINAPI PsIsSystemThread(PETHREAD thread)
+ {
+     return thread->kthread.process == PsInitialSystemProcess;
+-}
+-
+-/***********************************************************************
+- *           PsGetCurrentThreadTeb   (NTOSKRNL.EXE.@)
+- */
+-PVOID WINAPI PsGetCurrentThreadTeb(void)
+-{
+-    PETHREAD thread = (PETHREAD)KeGetCurrentThread();
+-
+-    if (!thread || !thread->kthread.process || PsIsSystemThread(thread)) return NULL;
+-    return thread->kthread.teb;
+ }
+ 
+ 
+@@ -4562,17 +3735,8 @@
+  */
+ KAFFINITY WINAPI KeQueryGroupAffinity(USHORT group_number)
+ {
+-    KAFFINITY mask = 0;
+-    ULONG index;
+-
+-    /* The immutable table contains exactly the active logical processors.
+-     * Preserve sparse processor numbers; an invalid group has no matches.
+-     * No allocation, locks, waits or scheduler changes are needed. */
+-    for (index = 0; index < processor_index_count; index++)
+-        if (processor_index_table[index].Group == group_number)
+-            mask |= (KAFFINITY)1 << processor_index_table[index].Number;
+-
+-    return mask;
++    FIXME("%u stub\n", group_number);
++    return 0;
+ }
+ 
+ /***********************************************************************
+@@ -4757,9 +3921,9 @@
+  */
+ BOOLEAN WINAPI KeAreApcsDisabled(void)
+ {
+-    struct _KTHREAD *thread = KeGetCurrentThread();
+-    TRACE( "critical %u, guarded %u\n", thread->critical_region, thread->guarded_region );
+-    return !!(thread->critical_region || thread->guarded_region);
++    unsigned int critical_region = KeGetCurrentThread()->critical_region;
++    TRACE( "%u\n", critical_region );
++    return !!critical_region;
+ }
+ 
+ /***********************************************************************
+@@ -4767,8 +3931,7 @@
+  */
+ BOOLEAN WINAPI KeAreAllApcsDisabled(void)
+ {
+-    /* Wine does not yet implement IRQL or kernel APC delivery. */
+-    return !!KeGetCurrentThread()->guarded_region;
++    return KeAreApcsDisabled();
+ }
+ 
+ /***********************************************************************
+@@ -4793,17 +3956,7 @@
+  */
+ void WINAPI ProbeForRead(void *address, SIZE_T length, ULONG alignment)
+ {
+-    ULONG_PTR start = (ULONG_PTR)address, end;
+-
+-    TRACE("(%p %Iu %lu)\n", address, length, alignment);
+-
+-    if (!length) return;
+-    if (start & (alignment - 1)) RtlRaiseStatus( STATUS_DATATYPE_MISALIGNMENT );
+-
+-    /* Validate the numerical user range without accessing it. Protection can
+-     * change after this check, so the caller must still handle access faults. */
+-    end = start + length;
+-    if (end < start || end > mm_user_probe_address) RtlRaiseStatus( STATUS_ACCESS_VIOLATION );
++    FIXME("(%p %Iu %lu) stub\n", address, length, alignment);
+ }
+ 
+ /***********************************************************************
+@@ -5077,19 +4230,6 @@
+     return ret;
+ }
+ 
+-/* Boundary diagnostics only; preserve LastError even while initializing the channel. */
+-static void loader_boundary_trace( const char *phase, const WCHAR *driver_name,
+-                                   const char *result_kind, ULONG result, BOOL last_error_defined )
+-{
+-    DWORD last_error = GetLastError();
+-
+-    if (TRACE_ON(loaderboundary))
+-        TRACE_(loaderboundary)( "phase=%s driver=%s result_kind=%s result=%#lx last_error_defined=%d last_error=%lu\n",
+-                                phase, wine_dbgstr_w(driver_name), result_kind, result,
+-                                last_error_defined, last_error_defined ? last_error : 0 );
+-    SetLastError( last_error );
+-}
+-
+ /* load the .sys module for a device driver */
+ static HMODULE load_driver( const WCHAR *driver_name, const UNICODE_STRING *keyname )
+ {
+@@ -5103,11 +4243,9 @@
+     LPWSTR path = NULL, str;
+     DWORD type, size;
+ 
+-    loader_boundary_trace( "load_driver.enter", driver_name, "none", 0, FALSE );
+     if (RegOpenKeyW( HKEY_LOCAL_MACHINE, keyname->Buffer + 18 /* skip \registry\machine */, &driver_hkey ))
+     {
+         ERR( "cannot open key %s, err=%lu\n", wine_dbgstr_w(keyname->Buffer), GetLastError() );
+-        loader_boundary_trace( "load_driver.leave", driver_name, "module_present", FALSE, FALSE );
+         return NULL;
+     }
+ 
+@@ -5126,7 +4264,6 @@
+         if (!path)
+         {
+             RegCloseKey( driver_hkey );
+-            loader_boundary_trace( "load_driver.leave", driver_name, "module_present", FALSE, FALSE );
+             return NULL;
+         }
+ 
+@@ -5165,11 +4302,8 @@
+ 
+     TRACE( "loading driver %s\n", wine_dbgstr_w(str) );
+ 
+-    loader_boundary_trace( "load_library.enter", driver_name, "none", 0, FALSE );
+     module = LoadLibraryExW( str, 0, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS );
+-    loader_boundary_trace( "load_library.leave", driver_name, "module_present", !!module, !module );
+-
+-    loader_boundary_trace( "notify_phase.enter", driver_name, "none", 0, FALSE );
++
+     if (module && load_image_notify_routine_count)
+     {
+         UNICODE_STRING module_name;
+@@ -5193,20 +4327,9 @@
+         }
+     }
+ 
+-    loader_boundary_trace( "notify_phase.leave", driver_name, "none", 0, FALSE );
+     HeapFree( GetProcessHeap(), 0, path );
+-    loader_boundary_trace( "load_driver.leave", driver_name, "module_present", !!module, FALSE );
+     return module;
+ }
+-
+-#if defined(__x86_64__) && !defined(__arm64ec__)
+-static NTSTATUS __attribute__((naked)) call_driver_init( struct _DRIVER_OBJECT *driver, PUNICODE_STRING keyname, void *init )
+-{
+-    asm( "movq $0xFFFF800000000000,%r9\n\t"
+-         "orq %r9,(%rsp)\n\t"
+-         "jmpq *%r8\n\t" );
+-}
+-#endif
+ 
+ /* call the driver init entry point */
+ static NTSTATUS WINAPI init_driver( DRIVER_OBJECT *driver_object, UNICODE_STRING *keyname )
+@@ -5230,23 +4353,13 @@
+     driver_object->DriverSize = ((LDR_DATA_TABLE_ENTRY *)driver_object->DriverSection)->SizeOfImage;
+ 
+     nt = RtlImageNtHeader( module );
+-    if (!nt->OptionalHeader.AddressOfEntryPoint)
+-    {
+-        loader_boundary_trace( "driver_init.no_entry", driver_name, "ntstatus", STATUS_SUCCESS, FALSE );
+-        return STATUS_SUCCESS;
+-    }
++    if (!nt->OptionalHeader.AddressOfEntryPoint) return STATUS_SUCCESS;
+     driver_object->DriverInit = (PDRIVER_INITIALIZE)((char *)module + nt->OptionalHeader.AddressOfEntryPoint);
+ 
+     TRACE_(relay)( "\1Call driver init %p (obj=%p,str=%s)\n",
+                    driver_object->DriverInit, driver_object, wine_dbgstr_w(keyname->Buffer) );
+ 
+-    loader_boundary_trace( "driver_init.enter", driver_name, "none", 0, FALSE );
+-#if defined(__x86_64__) && !defined(__arm64ec__)
+-    status = call_driver_init( driver_object, keyname, driver_object->DriverInit );
+-#else
+     status = driver_object->DriverInit( driver_object, keyname );
+-#endif
+-    loader_boundary_trace( "driver_init.leave", driver_name, "ntstatus", status, FALSE );
+ 
+     TRACE_(relay)( "\1Ret  driver init %p (obj=%p,str=%s) retval=%08lx\n",
+                    driver_object->DriverInit, driver_object, wine_dbgstr_w(keyname->Buffer), status );
+@@ -5542,9 +4655,7 @@
+  */
+ void WINAPI KeEnterGuardedRegion(void)
+ {
+-    /* Track the logical region independently of critical regions. Kernel APC
+-     * insertion and delivery are not implemented in Wine yet. */
+-    KeGetCurrentThread()->guarded_region++;
++    FIXME("\n");
+ }
+ 
+ /*********************************************************************
+@@ -5552,7 +4663,7 @@
+  */
+ void WINAPI KeLeaveGuardedRegion(void)
+ {
+-    KeGetCurrentThread()->guarded_region--;
++    FIXME("\n");
+ }
+ 
+ static const WCHAR token_type_name[] = {'T','o','k','e','n',0};
+@@ -5912,27 +5023,10 @@
+ {
+     static void *handler;
+     LARGE_INTEGER count;
+-    SYSTEM_BASIC_INFORMATION info;
+-    NTSTATUS status;
+ 
+     switch(reason)
+     {
+     case DLL_PROCESS_ATTACH:
+-        /* Use this Wine process's exclusive user-space limit, not a host or
+-         * hard-coded Windows address. Do this before allocating module state. */
+-        if ((status = NtQuerySystemInformation( SystemBasicInformation, &info, sizeof(info), NULL )))
+-        {
+-            ERR( "Failed to query user-space bounds, status %#lx.\n", status );
+-            return FALSE;
+-        }
+-        if ((ULONG_PTR)info.HighestUserAddress == ~(ULONG_PTR)0)
+-        {
+-            ERR( "Invalid user-space upper bound %p.\n", info.HighestUserAddress );
+-            return FALSE;
+-        }
+-        mm_user_probe_address = (ULONG_PTR)info.HighestUserAddress + 1;
+-        if (!initialize_processor_index_table()) return FALSE;
+-        processor_index_initialized = TRUE;
+         DisableThreadLibraryCalls( inst );
+ #if defined(__i386__) || defined(__x86_64__)
+         handler = RtlAddVectoredExceptionHandler( TRUE, vectored_handler );
+@@ -5944,13 +5038,9 @@
+         LdrRegisterDllNotification( 0, ldr_notify_callback, NULL, &ldr_notify_cookie );
+         break;
+     case DLL_PROCESS_DETACH:
+-        /* A failed first attach step created none of the state below. */
+-        if (!processor_index_initialized) break;
+         LdrUnregisterDllNotification( ldr_notify_cookie );
+ 
+         if (reserved) break;
+-
+-        HeapFree( GetProcessHeap(), 0, processor_index_table );
+ 
+         if (dpc_call_tp)
+             CloseThreadpool(dpc_call_tp);
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -1,4 +1,4 @@
+-1 stdcall EtwRegisterClassicProvider(ptr long ptr ptr ptr)
++@ stdcall EtwRegisterClassicProvider(ptr long ptr ptr ptr)
+ @ stdcall EtwUnregister(int64)
+ @ stdcall -arch=!i386 ExAcquireFastMutex(ptr)
+ @ stdcall -fastcall ExAcquireFastMutexUnsafe(ptr)
+@@ -62,7 +62,6 @@
+ @ stdcall -fastcall KeReleaseInStackQueuedSpinLockFromDpcLevel(ptr)
+ @ stdcall -fastcall KeReleaseGuardedMutexUnsafe(ptr)
+ @ stdcall -fastcall KeReleaseGuardedMutex(ptr)
+-@ stdcall -fastcall KeTryToAcquireGuardedMutex(ptr)
+ @ stub KeSetTimeUpdateNotifyRoutine
+ @ stub KefAcquireSpinLockAtDpcLevel
+ @ stub KefReleaseSpinLockFromDpcLevel
+@@ -570,8 +569,6 @@
+ @ stdcall KeGetCurrentProcessorNumber() NtGetCurrentProcessorNumber
+ @ stdcall KeGetCurrentProcessorNumberEx(ptr)
+ @ stdcall KeGetCurrentThread()
+-1678 stdcall KeGetProcessorIndexFromNumber(ptr)
+-@ stdcall KeGetProcessorNumberFromIndex(long ptr)
+ @ stub KeGetPreviousMode
+ @ stub KeGetRecommendedSharedDataAlignment
+ @ stub KeI386AbiosCall
+@@ -784,7 +781,7 @@
+ @ stub MmUnmapViewInSystemSpace
+ @ stub MmUnmapViewOfSection
+ @ stub MmUnsecureVirtualMemory
+-@ extern MmUserProbeAddress mm_user_probe_address
++@ stub MmUserProbeAddress
+ @ extern NlsAnsiCodePage ntdll.NlsAnsiCodePage
+ @ stub NlsLeadByteInfo
+ @ extern NlsMbCodePageTag ntdll.NlsMbCodePageTag
+@@ -860,7 +857,6 @@
+ @ stub ObCreateObject
+ @ stub ObCreateObjectType
+ @ stdcall ObDereferenceObject(ptr)
+-@ stdcall ObDereferenceObjectDeferDelete(ptr)
+ @ stub ObDereferenceSecurityDescriptor
+ @ stub ObFindHandleForObject
+ @ stdcall ObGetFilterVersion()
+@@ -915,13 +911,12 @@
+ @ stdcall PsDereferencePrimaryToken(ptr)
+ @ stub PsDisableImpersonation
+ @ stub PsEstablishWin32Callouts
+-@ stdcall PsGetContextThread(ptr ptr long)
++@ stdcall PsGetContextThread(ptr ptr)
+ @ stdcall PsGetCurrentProcess() IoGetCurrentProcess
+ @ stdcall PsGetCurrentProcessId()
+ @ stdcall PsGetCurrentProcessSessionId()
+ @ stdcall PsGetCurrentThread() KeGetCurrentThread
+ @ stdcall PsGetCurrentThreadId()
+-@ stdcall PsGetCurrentThreadTeb()
+ @ stub PsGetCurrentThreadPreviousMode
+ @ stub PsGetCurrentThreadStackBase
+ @ stub PsGetCurrentThreadStackLimit
+@@ -937,7 +932,7 @@
+ @ stdcall PsGetProcessImageFileName(ptr)
+ @ stdcall PsGetProcessInheritedFromUniqueProcessId(ptr)
+ @ stub PsGetProcessJob
+-@ stdcall PsGetProcessPeb(ptr)
++@ stub PsGetProcessPeb
+ @ stub PsGetProcessPriorityClass
+ @ stdcall PsGetProcessSectionBaseAddress(ptr)
+ @ stub PsGetProcessSecurityPort
+@@ -1359,7 +1354,7 @@
+ @ stub SeDeassignSecurity
+ @ stub SeDeleteAccessState
+ @ stub SeDeleteObjectAuditAlarm
+-@ extern SeExports
++@ stub SeExports
+ @ stub SeFilterToken
+ @ stub SeFreePrivileges
+ @ stub SeImpersonateClient
+@@ -1463,7 +1458,7 @@
+ @ stdcall -private ZwLockVirtualMemory(long ptr ptr long) NtLockVirtualMemory
+ @ stdcall ZwMakePermanentObject(long) NtMakePermanentObject
+ @ stdcall ZwMakeTemporaryObject(long) NtMakeTemporaryObject
+-@ stdcall ZwMapViewOfSection(long long ptr long long ptr ptr long long long)
++@ stdcall ZwMapViewOfSection(long long ptr long long ptr ptr long long long) NtMapViewOfSection
+ @ stdcall -private ZwNotifyChangeDirectoryFile(long long ptr ptr ptr ptr long long long) NtNotifyChangeDirectoryFile
+ @ stdcall -private ZwNotifyChangeKey(long long ptr ptr ptr long long ptr long long) NtNotifyChangeKey
+ @ stdcall ZwOpenDirectoryObject(ptr long ptr) NtOpenDirectoryObject
+@@ -1556,7 +1551,7 @@
+ @ stdcall -private ZwUnloadKey(ptr) NtUnloadKey
+ @ stdcall -private ZwUnlockFile(long ptr ptr ptr ptr) NtUnlockFile
+ @ stdcall -private ZwUnlockVirtualMemory(long ptr ptr long) NtUnlockVirtualMemory
+-@ stdcall ZwUnmapViewOfSection(long ptr)
++@ stdcall ZwUnmapViewOfSection(long ptr) NtUnmapViewOfSection
+ @ stdcall -private ZwWaitForMultipleObjects(long ptr long long ptr) NtWaitForMultipleObjects
+ @ stdcall ZwWaitForSingleObject(long long ptr) NtWaitForSingleObject
+ @ stdcall ZwWriteFile(long long ptr ptr ptr ptr long ptr ptr) NtWriteFile
+--- a/dlls/ntoskrnl.exe/ntoskrnl_private.h
++++ b/dlls/ntoskrnl.exe/ntoskrnl_private.h
+@@ -68,9 +68,7 @@
+     PEPROCESS process;
+     CLIENT_ID id;
+     unsigned int critical_region;
+-    unsigned int guarded_region;
+     KAFFINITY user_affinity;
+-    PVOID teb;
+ };
+ 
+ struct _ETHREAD
+@@ -106,11 +104,9 @@
+ {
+     DRIVER_OBJECT driver_obj;
+     DRIVER_EXTENSION driver_extension;
+-    UNICODE_STRING registry_path;
+     SERVICE_STATUS_HANDLE service_handle;
+     struct wine_rb_entry entry;
+     struct list root_pnp_devices;
+-    struct list object_extensions;
+ };
+ 
+ void ObReferenceObject( void *obj );
+--- a/dlls/ntoskrnl.exe/se_exports.c
++++ /dev/null
+@@ -1,412 +0,0 @@
+-/*
+- * Well-known security identifiers and privilege values
+- *
+- *
+- * This library is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU Lesser General Public
+- * License as published by the Free Software Foundation; either
+- * version 2.1 of the License, or (at your option) any later version.
+- *
+- * This library is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+- * Lesser General Public License for more details.
+- *
+- * You should have received a copy of the GNU Lesser General Public
+- * License along with this library; if not, write to the Free Software
+- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+- */
+-
+-#include "ntoskrnl_private.h"
+-
+-/* These objects contain public constants and live as long as the module. */
+-
+-struct sid2
+-{
+-    BYTE Revision;
+-    BYTE SubAuthorityCount;
+-    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
+-    DWORD SubAuthority[2];
+-};
+-
+-struct sid6
+-{
+-    BYTE Revision;
+-    BYTE SubAuthorityCount;
+-    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
+-    DWORD SubAuthority[6];
+-};
+-
+-struct sid10
+-{
+-    BYTE Revision;
+-    BYTE SubAuthorityCount;
+-    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
+-    DWORD SubAuthority[10];
+-};
+-
+-/* S-1-0-0 */
+-static const SID null_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 0 } },
+-    { 0 }
+-};
+-
+-/* S-1-1-0 */
+-static const SID world_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 1 } },
+-    { 0 }
+-};
+-
+-/* S-1-2-0 */
+-static const SID local_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 2 } },
+-    { 0 }
+-};
+-
+-/* S-1-3-0 */
+-static const SID creator_owner_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 3 } },
+-    { 0 }
+-};
+-
+-/* S-1-3-1 */
+-static const SID creator_group_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 3 } },
+-    { 1 }
+-};
+-
+-/* S-1-5 */
+-static const SID nt_authority_sid =
+-{
+-    SID_REVISION, 0, { { 0, 0, 0, 0, 0, 5 } },
+-    { 0 }
+-};
+-
+-/* S-1-5-1 */
+-static const SID dialup_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 1 }
+-};
+-
+-/* S-1-5-2 */
+-static const SID network_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 2 }
+-};
+-
+-/* S-1-5-3 */
+-static const SID batch_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 3 }
+-};
+-
+-/* S-1-5-4 */
+-static const SID interactive_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 4 }
+-};
+-
+-/* S-1-5-18 */
+-static const SID local_system_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 18 }
+-};
+-
+-/* S-1-5-32-544 */
+-static const struct sid2 alias_admins_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 544 }
+-};
+-
+-/* S-1-5-32-545 */
+-static const struct sid2 alias_users_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 545 }
+-};
+-
+-/* S-1-5-32-546 */
+-static const struct sid2 alias_guests_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 546 }
+-};
+-
+-/* S-1-5-32-547 */
+-static const struct sid2 alias_power_users_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 547 }
+-};
+-
+-/* S-1-5-32-548 */
+-static const struct sid2 alias_account_ops_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 548 }
+-};
+-
+-/* S-1-5-32-549 */
+-static const struct sid2 alias_system_ops_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 549 }
+-};
+-
+-/* S-1-5-32-550 */
+-static const struct sid2 alias_print_ops_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 550 }
+-};
+-
+-/* S-1-5-32-551 */
+-static const struct sid2 alias_backup_ops_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 5 } },
+-    { 32, 551 }
+-};
+-
+-/* S-1-5-11 */
+-static const SID authenticated_users_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 11 }
+-};
+-
+-/* S-1-5-12 */
+-static const SID restricted_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 12 }
+-};
+-
+-/* S-1-5-7 */
+-static const SID anonymous_logon_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 7 }
+-};
+-
+-/* S-1-5-19 */
+-static const SID local_service_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 19 }
+-};
+-
+-/* S-1-5-20 */
+-static const SID network_service_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 20 }
+-};
+-
+-/* S-1-5-17 */
+-static const SID iuser_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 5 } },
+-    { 17 }
+-};
+-
+-/* S-1-16-0 */
+-static const SID untrusted_mandatory_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 16 } },
+-    { 0 }
+-};
+-
+-/* S-1-16-4096 */
+-static const SID low_mandatory_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 16 } },
+-    { 4096 }
+-};
+-
+-/* S-1-16-8192 */
+-static const SID medium_mandatory_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 16 } },
+-    { 8192 }
+-};
+-
+-/* S-1-16-12288 */
+-static const SID high_mandatory_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 16 } },
+-    { 12288 }
+-};
+-
+-/* S-1-16-16384 */
+-static const SID system_mandatory_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 16 } },
+-    { 16384 }
+-};
+-
+-/* S-1-3-4 */
+-static const SID owner_rights_sid =
+-{
+-    SID_REVISION, 1, { { 0, 0, 0, 0, 0, 3 } },
+-    { 4 }
+-};
+-
+-/* S-1-15-2-1 */
+-static const struct sid2 all_app_packages_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 15 } },
+-    { 2, 1 }
+-};
+-
+-/* S-1-5-84-0-0-0-0-0 */
+-static const struct sid6 user_mode_drivers_sid =
+-{
+-    SID_REVISION, 6, { { 0, 0, 0, 0, 0, 5 } },
+-    { 84, 0, 0, 0, 0, 0 }
+-};
+-
+-/* S-1-19-1024-8192 */
+-static const struct sid2 proc_trust_win_tcb_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 19 } },
+-    { 1024, 8192 }
+-};
+-
+-/* S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464 */
+-static const struct sid6 trusted_installer_sid =
+-{
+-    SID_REVISION, 6, { { 0, 0, 0, 0, 0, 5 } },
+-    { 80, 956008885, 3418522649u, 1831038044, 1853292631, 2271478464u }
+-};
+-
+-/* S-1-15-3-65536 */
+-static const struct sid2 app_silo_sid =
+-{
+-    SID_REVISION, 2, { { 0, 0, 0, 0, 0, 15 } },
+-    { 3, 65536 }
+-};
+-
+-/* S-1-15-3-65536-1888954469-739942743-1668119174-2468466756-4239452838-1296943325-355587736-700089176 */
+-static const struct sid10 app_silo_volume_root_minimal_capability_sid =
+-{
+-    SID_REVISION, 10, { { 0, 0, 0, 0, 0, 15 } },
+-    { 3, 65536, 1888954469, 739942743, 1668119174, 2468466756u, 4239452838u, 1296943325, 355587736, 700089176 }
+-};
+-
+-/* S-1-15-3-65536-4045685566-1323397456-4055816110-285687253-194181-4019357623-1925838800-191844675 */
+-static const struct sid10 app_silo_profiles_root_minimal_capability_sid =
+-{
+-    SID_REVISION, 10, { { 0, 0, 0, 0, 0, 15 } },
+-    { 3, 65536, 4045685566u, 1323397456, 4055816110u, 285687253, 194181, 4019357623u, 1925838800, 191844675 }
+-};
+-
+-/* S-1-15-3-65536-3824507126-3536883880-1892970411-4196641476-2379744348-824817663-547559155-3760721857 */
+-static const struct sid10 app_silo_prompt_for_access_capability_sid =
+-{
+-    SID_REVISION, 10, { { 0, 0, 0, 0, 0, 15 } },
+-    { 3, 65536, 3824507126u, 3536883880u, 1892970411, 4196641476u, 2379744348u, 824817663, 547559155, 3760721857u }
+-};
+-
+-/* S-1-15-3-65536-509389445-3675524077-1716841325-2011005795-3412030966-3732123021-197586076-3747708056 */
+-static const struct sid10 app_silo_access_to_publisher_directory_capability_sid =
+-{
+-    SID_REVISION, 10, { { 0, 0, 0, 0, 0, 15 } },
+-    { 3, 65536, 509389445, 3675524077u, 1716841325, 2011005795, 3412030966u, 3732123021u, 197586076, 3747708056u }
+-};
+-
+-/* App-silo capability identifiers above use the documented capability
+- * names: uppercase UTF-16 bytes without NUL, SHA-256, and the
+- * isolatedWin32- capability RID 65536. They are constants, not tokens. */
+-static SE_EXPORTS se_exports =
+-{
+-    .SeCreateTokenPrivilege = { 2, 0 },
+-    .SeAssignPrimaryTokenPrivilege = { 3, 0 },
+-    .SeLockMemoryPrivilege = { 4, 0 },
+-    .SeIncreaseQuotaPrivilege = { 5, 0 },
+-    .SeUnsolicitedInputPrivilege = { 6, 0 },
+-    .SeTcbPrivilege = { 7, 0 },
+-    .SeSecurityPrivilege = { 8, 0 },
+-    .SeTakeOwnershipPrivilege = { 9, 0 },
+-    .SeLoadDriverPrivilege = { 10, 0 },
+-    .SeCreatePagefilePrivilege = { 15, 0 },
+-    .SeIncreaseBasePriorityPrivilege = { 14, 0 },
+-    .SeSystemProfilePrivilege = { 11, 0 },
+-    .SeSystemtimePrivilege = { 12, 0 },
+-    .SeProfileSingleProcessPrivilege = { 13, 0 },
+-    .SeCreatePermanentPrivilege = { 16, 0 },
+-    .SeBackupPrivilege = { 17, 0 },
+-    .SeRestorePrivilege = { 18, 0 },
+-    .SeShutdownPrivilege = { 19, 0 },
+-    .SeDebugPrivilege = { 20, 0 },
+-    .SeAuditPrivilege = { 21, 0 },
+-    .SeSystemEnvironmentPrivilege = { 22, 0 },
+-    .SeChangeNotifyPrivilege = { 23, 0 },
+-    .SeRemoteShutdownPrivilege = { 24, 0 },
+-    .SeNullSid = (PSID)&null_sid,
+-    .SeWorldSid = (PSID)&world_sid,
+-    .SeLocalSid = (PSID)&local_sid,
+-    .SeCreatorOwnerSid = (PSID)&creator_owner_sid,
+-    .SeCreatorGroupSid = (PSID)&creator_group_sid,
+-    .SeNtAuthoritySid = (PSID)&nt_authority_sid,
+-    .SeDialupSid = (PSID)&dialup_sid,
+-    .SeNetworkSid = (PSID)&network_sid,
+-    .SeBatchSid = (PSID)&batch_sid,
+-    .SeInteractiveSid = (PSID)&interactive_sid,
+-    .SeLocalSystemSid = (PSID)&local_system_sid,
+-    .SeAliasAdminsSid = (PSID)&alias_admins_sid,
+-    .SeAliasUsersSid = (PSID)&alias_users_sid,
+-    .SeAliasGuestsSid = (PSID)&alias_guests_sid,
+-    .SeAliasPowerUsersSid = (PSID)&alias_power_users_sid,
+-    .SeAliasAccountOpsSid = (PSID)&alias_account_ops_sid,
+-    .SeAliasSystemOpsSid = (PSID)&alias_system_ops_sid,
+-    .SeAliasPrintOpsSid = (PSID)&alias_print_ops_sid,
+-    .SeAliasBackupOpsSid = (PSID)&alias_backup_ops_sid,
+-    .SeAuthenticatedUsersSid = (PSID)&authenticated_users_sid,
+-    .SeRestrictedSid = (PSID)&restricted_sid,
+-    .SeAnonymousLogonSid = (PSID)&anonymous_logon_sid,
+-    .SeUndockPrivilege = { 25, 0 },
+-    .SeSyncAgentPrivilege = { 26, 0 },
+-    .SeEnableDelegationPrivilege = { 27, 0 },
+-    .SeLocalServiceSid = (PSID)&local_service_sid,
+-    .SeNetworkServiceSid = (PSID)&network_service_sid,
+-    .SeManageVolumePrivilege = { 28, 0 },
+-    .SeImpersonatePrivilege = { 29, 0 },
+-    .SeCreateGlobalPrivilege = { 30, 0 },
+-    .SeTrustedCredManAccessPrivilege = { 31, 0 },
+-    .SeRelabelPrivilege = { 32, 0 },
+-    .SeIncreaseWorkingSetPrivilege = { 33, 0 },
+-    .SeTimeZonePrivilege = { 34, 0 },
+-    .SeCreateSymbolicLinkPrivilege = { 35, 0 },
+-    .SeIUserSid = (PSID)&iuser_sid,
+-    .SeUntrustedMandatorySid = (PSID)&untrusted_mandatory_sid,
+-    .SeLowMandatorySid = (PSID)&low_mandatory_sid,
+-    .SeMediumMandatorySid = (PSID)&medium_mandatory_sid,
+-    .SeHighMandatorySid = (PSID)&high_mandatory_sid,
+-    .SeSystemMandatorySid = (PSID)&system_mandatory_sid,
+-    .SeOwnerRightsSid = (PSID)&owner_rights_sid,
+-    .SeAllAppPackagesSid = (PSID)&all_app_packages_sid,
+-    .SeUserModeDriversSid = (PSID)&user_mode_drivers_sid,
+-    .SeProcTrustWinTcbSid = (PSID)&proc_trust_win_tcb_sid,
+-    .SeTrustedInstallerSid = (PSID)&trusted_installer_sid,
+-    .SeDelegateSessionUserImpersonatePrivilege = { 36, 0 },
+-    .SeAppSiloSid = (PSID)&app_silo_sid,
+-    .SeAppSiloVolumeRootMinimalCapabilitySid = (PSID)&app_silo_volume_root_minimal_capability_sid,
+-    .SeAppSiloProfilesRootMinimalCapabilitySid = (PSID)&app_silo_profiles_root_minimal_capability_sid,
+-    .SeAppSiloPromptForAccessCapabilitySid = (PSID)&app_silo_prompt_for_access_capability_sid,
+-    .SeAppSiloAccessToPublisherDirectoryCapabilitySid = (PSID)&app_silo_access_to_publisher_directory_capability_sid,
+-};
+-
+-PSE_EXPORTS SeExports = &se_exports;
+-
+-C_ASSERT(sizeof(SE_EXPORTS) == 35 * sizeof(LUID) + 40 * sizeof(PSID));
+--- a/dlls/ntoskrnl.exe/sync.c
++++ b/dlls/ntoskrnl.exe/sync.c
+@@ -439,39 +439,13 @@
+     KeInitializeEvent(&mutex->Event, SynchronizationEvent, FALSE);
+ }
+ 
+-/* Use the same Count/event handoff as fast mutexes, but keep ownership and
+- * guarded-region accounting local to guarded mutexes. A failed backend wait
+- * must not return to the caller as a successful acquisition. */
+-static NTSTATUS acquire_guarded_mutex( KGUARDED_MUTEX *mutex, PKTHREAD thread )
+-{
+-    NTSTATUS status;
+-
+-    if (InterlockedDecrement( &mutex->Count ) < 0)
+-    {
+-        InterlockedIncrement( (LONG *)&mutex->Contention );
+-        if ((status = KeWaitForSingleObject( &mutex->Event, Executive, KernelMode, FALSE, NULL )))
+-            return status;
+-    }
+-    mutex->Owner = thread;
+-    return STATUS_SUCCESS;
+-}
+-
+-static void release_guarded_mutex( KGUARDED_MUTEX *mutex )
+-{
+-    mutex->Owner = NULL;
+-    if (InterlockedIncrement( &mutex->Count ) < 1)
+-        KeSetEvent( &mutex->Event, IO_NO_INCREMENT, FALSE );
+-}
+-
+ /***********************************************************************
+  *           KeAcquireGuardedMutexUnsafe   (NTOSKRNL.EXE.@)
+  */
+ DEFINE_FASTCALL1_WRAPPER(KeAcquireGuardedMutexUnsafe)
+ void FASTCALL KeAcquireGuardedMutexUnsafe(PKGUARDED_MUTEX mutex)
+ {
+-    NTSTATUS status;
+-
+-    if ((status = acquire_guarded_mutex( mutex, KeGetCurrentThread() ))) RtlRaiseStatus( status );
++    ExAcquireFastMutexUnsafe((PFAST_MUTEX)mutex);
+ }
+ 
+ /***********************************************************************
+@@ -480,35 +454,8 @@
+ DEFINE_FASTCALL1_WRAPPER(KeAcquireGuardedMutex)
+ void FASTCALL KeAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
+ {
+-    struct _KTHREAD *thread = KeGetCurrentThread();
+-    NTSTATUS status;
+-
+-    thread->guarded_region++;
+-    if ((status = acquire_guarded_mutex( mutex, thread )))
+-    {
+-        thread->guarded_region--;
+-        RtlRaiseStatus( status );
+-    }
+-}
+-
+-/***********************************************************************
+- *           KeTryToAcquireGuardedMutex   (NTOSKRNL.EXE.@)
+- */
+-DEFINE_FASTCALL1_WRAPPER(KeTryToAcquireGuardedMutex)
+-BOOLEAN FASTCALL KeTryToAcquireGuardedMutex(PKGUARDED_MUTEX mutex)
+-{
+-    struct _KTHREAD *thread = KeGetCurrentThread();
+-
+-    /* Resolving a cold KTHREAD can use Wine metadata/server facilities. This
+-     * attempt itself never waits for the mutex or registers an event waiter. */
+-    thread->guarded_region++;
+-    if (InterlockedCompareExchange( &mutex->Count, 0, FM_LOCK_BIT ) != FM_LOCK_BIT)
+-    {
+-        thread->guarded_region--;
+-        return FALSE;
+-    }
+-    mutex->Owner = thread;
+-    return TRUE;
++    /* FIXME: Enter Guarded Region */
++    KeAcquireGuardedMutexUnsafe(mutex);
+ }
+ 
+ /***********************************************************************
+@@ -517,7 +464,7 @@
+ DEFINE_FASTCALL1_WRAPPER(KeReleaseGuardedMutexUnsafe)
+ void FASTCALL KeReleaseGuardedMutexUnsafe(PKGUARDED_MUTEX mutex)
+ {
+-    release_guarded_mutex( mutex );
++    ExReleaseFastMutexUnsafe((PFAST_MUTEX)mutex);
+ }
+ 
+ /***********************************************************************
+@@ -526,10 +473,8 @@
+ DEFINE_FASTCALL1_WRAPPER(KeReleaseGuardedMutex)
+ void FASTCALL KeReleaseGuardedMutex(PKGUARDED_MUTEX mutex)
+ {
+-    struct _KTHREAD *thread = KeGetCurrentThread();
+-
+-    release_guarded_mutex( mutex );
+-    thread->guarded_region--;
++    KeReleaseGuardedMutexUnsafe(mutex);
++    /* FIXME: Leave Guarded Region */
+ }
+ 
+ static void CALLBACK ke_timer_complete_proc(PTP_CALLBACK_INSTANCE instance, void *timer_, PTP_TIMER tp_timer)
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -364,52 +364,6 @@
+ @interface WineBaseView : NSView
+ @end
+ 
+-@interface WineDXMTMetalLayer : CAMetalLayer
+-{
+-@public
+-    void (*before_drawable)(void *);
+-    void *present_context;
+-    unsigned long drawable_count;
+-    double stats_start, stats_callback, stats_acquire, stats_previous, stats_max_interval;
+-    unsigned stats_count;
+-}
+-@end
+-
+-@implementation WineDXMTMetalLayer
+-- (id<CAMetalDrawable>)nextDrawable
+-{
+-    BOOL measure = getenv("ENDFIELD_FRAME_STATS") != NULL;
+-    double start = measure ? CACurrentMediaTime() : 0;
+-    if (before_drawable) before_drawable(present_context);
+-    double after_callback = measure ? CACurrentMediaTime() : 0;
+-    id<CAMetalDrawable> drawable = [super nextDrawable];
+-    if (measure)
+-    {
+-        double end = CACurrentMediaTime();
+-        if (!stats_count) stats_start = start;
+-        if (stats_previous) stats_max_interval = MAX(stats_max_interval, start - stats_previous);
+-        stats_previous = start;
+-        stats_callback += after_callback - start;
+-        stats_acquire += end - after_callback;
+-        if (++stats_count == 120)
+-        {
+-            fprintf(stderr, "ENDFIELD-FRAMES layer=%p size=%.0fx%.0f calls_per_second=%.1f callback_ms=%.3f acquire_ms=%.3f max_interval_ms=%.1f\n",
+-                    self, self.drawableSize.width, self.drawableSize.height, 120.0 / (end - stats_start),
+-                    stats_callback * 1000 / 120, stats_acquire * 1000 / 120, stats_max_interval * 1000);
+-            stats_count = 0;
+-            stats_callback = stats_acquire = stats_max_interval = 0;
+-        }
+-    }
+-    ++drawable_count;
+-    if (getenv("ENDFIELD_METAL_DIAGNOSTICS") &&
+-        (drawable_count <= 3 || drawable_count == 120))
+-        fprintf(stderr, "ENDFIELD-METAL layer=%p drawable=%lu valid=%d size=%.0fx%.0f hidden=%d\n",
+-                self, drawable_count, drawable != nil, self.drawableSize.width,
+-                self.drawableSize.height, self.hidden);
+-    return drawable;
+-}
+-@end
+-
+ 
+ @interface WineMetalView : WineBaseView
+ {
+@@ -1078,7 +1032,7 @@
+ 
+     - (CALayer*) makeBackingLayer
+     {
+-        CAMetalLayer *layer = [WineDXMTMetalLayer layer];
++        CAMetalLayer *layer = [CAMetalLayer layer];
+         layer.device = _device;
+         layer.framebufferOnly = YES;
+         layer.magnificationFilter = kCAFilterNearest;
+@@ -4071,16 +4025,6 @@
+     });
+ }
+ 
+-void macdrv_metal_view_set_present_callback(macdrv_metal_view v, void (*callback)(void *), void *context)
+-{
+-    WineMetalView *view = (WineMetalView *)v;
+-    OnMainThread(^{
+-        WineDXMTMetalLayer *layer = (WineDXMTMetalLayer *)view.layer;
+-        layer->before_drawable = callback;
+-        layer->present_context = context;
+-    });
+-}
+-
+ @protocol WineMetalSwapChain <NSObject>
+ 
+ - (CAMetalLayer*) layer;
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -199,10 +199,6 @@
+     struct client_surface   client;
+     macdrv_view             cocoa_view;
+     macdrv_metal_swapchain  metal_swapchain;
+-    RECT                   applied_monitor_rect;
+-    macdrv_window          applied_window;
+-    macdrv_view            applied_parent;
+-    BOOL                   geometry_applied;
+ };
+ 
+ extern struct macdrv_client_surface *impl_from_client_surface(struct client_surface *client);
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -528,7 +528,6 @@
+ extern macdrv_metal_view macdrv_view_create_metal_view(macdrv_view v, macdrv_metal_device d);
+ extern macdrv_metal_layer macdrv_view_get_metal_layer(macdrv_metal_view v);
+ extern void macdrv_view_release_metal_view(macdrv_metal_view v);
+-extern void macdrv_metal_view_set_present_callback(macdrv_metal_view v, void (*callback)(void *), void *context);
+ extern macdrv_metal_swapchain macdrv_create_view_swapchain(macdrv_view v);
+ extern macdrv_metal_swapchain macdrv_create_offscreen_swapchain(void* hwnd, CGRect bounds);
+ extern macdrv_metal_layer macdrv_swapchain_get_layer(macdrv_metal_swapchain swapchain);
+--- a/dlls/winemac.drv/macdrv_main.c
++++ b/dlls/winemac.drv/macdrv_main.c
+@@ -64,105 +64,6 @@
+ 
+ CFDictionaryRef localized_strings;
+ 
+-/* DXMT 0.80 consumes the Wine 10 window-data prefix.  Wine 11 removed
+- * cocoa_view, so exposing get_win_data directly would give it rectangle
+- * bytes as an Objective-C pointer. Keep this ABI adapter separate from
+- * Wine's private data. Wine 11 client surfaces also own the view lifetime. */
+-struct dxmt_win_data
+-{
+-    HWND hwnd;
+-    macdrv_window cocoa_window;
+-    macdrv_view cocoa_view;
+-    macdrv_view client_cocoa_view;
+-    struct client_surface *surface;
+-};
+-
+-struct dxmt_metal_view
+-{
+-    macdrv_metal_view view;
+-    struct client_surface *surface;
+-};
+-
+-static struct dxmt_win_data *dxmt_get_win_data(HWND hwnd)
+-{
+-    struct dxmt_win_data *bridge = calloc(1, sizeof(*bridge));
+-    struct macdrv_win_data *data;
+-    if (!bridge) abort();
+-    data = get_win_data(hwnd);
+-    if (data)
+-    {
+-        bridge->hwnd = data->hwnd;
+-        bridge->cocoa_window = data->cocoa_window;
+-        release_win_data(data);
+-        bridge->surface = macdrv_CreateClientSurface(hwnd, 0);
+-        /* This slot is private to the create_view adapter below. */
+-        bridge->client_cocoa_view = (macdrv_view)bridge;
+-    }
+-    return bridge;
+-}
+-
+-static void dxmt_release_win_data(struct dxmt_win_data *bridge)
+-{
+-    if (bridge->surface) client_surface_release(bridge->surface);
+-    free(bridge);
+-}
+-
+-static void dxmt_before_drawable(void *context)
+-{
+-    client_surface_present(context);
+-}
+-
+-static macdrv_metal_view dxmt_create_metal_view(macdrv_view view, macdrv_metal_device device)
+-{
+-    struct dxmt_win_data *bridge = (struct dxmt_win_data *)view;
+-    struct dxmt_metal_view *metal;
+-    if (!bridge || !bridge->surface || !device) return NULL;
+-    if (!(metal = calloc(1, sizeof(*metal)))) return NULL;
+-    metal->view = macdrv_view_create_metal_view(impl_from_client_surface(bridge->surface)->cocoa_view, device);
+-    if (!metal->view) { free(metal); return NULL; }
+-    metal->surface = bridge->surface;
+-    bridge->surface = NULL;
+-    macdrv_metal_view_set_present_callback(metal->view, dxmt_before_drawable, metal->surface);
+-    client_surface_present(metal->surface);
+-    return (macdrv_metal_view)metal;
+-}
+-
+-static macdrv_metal_layer dxmt_get_metal_layer(macdrv_metal_view view)
+-{
+-    struct dxmt_metal_view *metal = (struct dxmt_metal_view *)view;
+-    return macdrv_view_get_metal_layer(metal->view);
+-}
+-
+-static void dxmt_release_metal_view(macdrv_metal_view view)
+-{
+-    struct dxmt_metal_view *metal = (struct dxmt_metal_view *)view;
+-    macdrv_metal_view_set_present_callback(metal->view, NULL, NULL);
+-    macdrv_view_release_metal_view(metal->view);
+-    client_surface_release(metal->surface);
+-    free(metal);
+-}
+-
+-/* Layout is defined by DXMT's winemetal_unix.c at tag v0.80. Unused entries
+- * remain reserved; only the five entries consumed by DXMT are exported. */
+-__attribute__((visibility("default"))) const struct
+-{
+-    void *init_display_devices;
+-    struct dxmt_win_data *(*get_data)(HWND);
+-    void (*release_data)(struct dxmt_win_data *);
+-    void *get_cocoa_window;
+-    void *create_device;
+-    void *release_device;
+-    macdrv_metal_view (*create_view)(macdrv_view, macdrv_metal_device);
+-    macdrv_metal_layer (*get_layer)(macdrv_metal_view);
+-    void (*release_view)(macdrv_metal_view);
+-    void *main_thread;
+-} macdrv_functions =
+-{
+-    NULL, dxmt_get_win_data, dxmt_release_win_data, NULL, NULL, NULL,
+-    dxmt_create_metal_view, dxmt_get_metal_layer,
+-    dxmt_release_metal_view, NULL
+-};
+-
+ 
+ /**************************************************************************
+  *              debugstr_cf
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1105,28 +1105,12 @@
+     struct macdrv_client_surface *surface = impl_from_client_surface(client);
+     HWND hwnd = client->hwnd, toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
+     struct macdrv_win_data *data;
+-    macdrv_view parent;
+ 
+     TRACE("%s\n", debugstr_client_surface(client));
+ 
+     if (!(data = get_win_data(toplevel))) return;
+-    parent = toplevel == hwnd ? NULL : data->client_view;
+-    /* Present runs every frame. Avoid synchronous Cocoa geometry work when
+-     * neither the geometry nor native parent changed. Visibility is still
+-     * checked separately by macdrv_client_surface_present. */
+-    if (surface->geometry_applied && surface->applied_window == data->cocoa_window &&
+-        surface->applied_parent == parent &&
+-        EqualRect(&surface->applied_monitor_rect, &client->monitor_rect))
+-    {
+-        release_win_data(data);
+-        return;
+-    }
+     macdrv_set_view_frame(surface->cocoa_view, cgrect_from_rect(client->monitor_rect));
+-    macdrv_set_view_superview(surface->cocoa_view, parent, data->cocoa_window, NULL, NULL);
+-    surface->applied_monitor_rect = client->monitor_rect;
+-    surface->applied_window = data->cocoa_window;
+-    surface->applied_parent = parent;
+-    surface->geometry_applied = TRUE;
++    macdrv_set_view_superview(surface->cocoa_view, toplevel == hwnd ? NULL : data->client_view, data->cocoa_window, NULL, NULL);
+     release_win_data(data);
+ }
+ 
+--- a/include/ddk/ntddk.h
++++ b/include/ddk/ntddk.h
+@@ -277,8 +277,6 @@
+ typedef GUID UUID;
+ #endif
+ 
+-extern const ULONG_PTR MmUserProbeAddress;
+-
+ NTSTATUS  WINAPI ExUuidCreate(UUID*);
+ NTSTATUS  WINAPI IoQueryDeviceDescription(PINTERFACE_TYPE,PULONG,PCONFIGURATION_TYPE,PULONG,
+                                   PCONFIGURATION_TYPE,PULONG,PIO_QUERY_DEVICE_ROUTINE,PVOID);
+@@ -290,9 +288,7 @@
+ NTSTATUS  WINAPI KeExpandKernelStackAndCallout(PEXPAND_STACK_CALLOUT,void*,SIZE_T);
+ void      WINAPI KeSetTargetProcessorDpc(PRKDPC,CCHAR);
+ BOOLEAN   WINAPI MmIsAddressValid(void *);
+-NTSTATUS  WINAPI PsGetContextThread(PETHREAD,CONTEXT*,KPROCESSOR_MODE);
+ HANDLE    WINAPI PsGetProcessId(PEPROCESS);
+-struct _PEB * WINAPI PsGetProcessPeb(PEPROCESS);
+ void *    WINAPI PsGetProcessSectionBaseAddress(PEPROCESS);
+ HANDLE    WINAPI PsGetThreadId(PETHREAD);
+ HANDLE    WINAPI PsGetThreadProcessId(PETHREAD);
+--- a/include/ddk/ntifs.h
++++ b/include/ddk/ntifs.h
+@@ -49,87 +49,6 @@
+ 
+ #define SYMLINK_FLAG_RELATIVE 0x00000001
+ 
+-typedef struct _SE_EXPORTS
+-{
+-    LUID SeCreateTokenPrivilege;
+-    LUID SeAssignPrimaryTokenPrivilege;
+-    LUID SeLockMemoryPrivilege;
+-    LUID SeIncreaseQuotaPrivilege;
+-    LUID SeUnsolicitedInputPrivilege;
+-    LUID SeTcbPrivilege;
+-    LUID SeSecurityPrivilege;
+-    LUID SeTakeOwnershipPrivilege;
+-    LUID SeLoadDriverPrivilege;
+-    LUID SeCreatePagefilePrivilege;
+-    LUID SeIncreaseBasePriorityPrivilege;
+-    LUID SeSystemProfilePrivilege;
+-    LUID SeSystemtimePrivilege;
+-    LUID SeProfileSingleProcessPrivilege;
+-    LUID SeCreatePermanentPrivilege;
+-    LUID SeBackupPrivilege;
+-    LUID SeRestorePrivilege;
+-    LUID SeShutdownPrivilege;
+-    LUID SeDebugPrivilege;
+-    LUID SeAuditPrivilege;
+-    LUID SeSystemEnvironmentPrivilege;
+-    LUID SeChangeNotifyPrivilege;
+-    LUID SeRemoteShutdownPrivilege;
+-    PSID SeNullSid;
+-    PSID SeWorldSid;
+-    PSID SeLocalSid;
+-    PSID SeCreatorOwnerSid;
+-    PSID SeCreatorGroupSid;
+-    PSID SeNtAuthoritySid;
+-    PSID SeDialupSid;
+-    PSID SeNetworkSid;
+-    PSID SeBatchSid;
+-    PSID SeInteractiveSid;
+-    PSID SeLocalSystemSid;
+-    PSID SeAliasAdminsSid;
+-    PSID SeAliasUsersSid;
+-    PSID SeAliasGuestsSid;
+-    PSID SeAliasPowerUsersSid;
+-    PSID SeAliasAccountOpsSid;
+-    PSID SeAliasSystemOpsSid;
+-    PSID SeAliasPrintOpsSid;
+-    PSID SeAliasBackupOpsSid;
+-    PSID SeAuthenticatedUsersSid;
+-    PSID SeRestrictedSid;
+-    PSID SeAnonymousLogonSid;
+-    LUID SeUndockPrivilege;
+-    LUID SeSyncAgentPrivilege;
+-    LUID SeEnableDelegationPrivilege;
+-    PSID SeLocalServiceSid;
+-    PSID SeNetworkServiceSid;
+-    LUID SeManageVolumePrivilege;
+-    LUID SeImpersonatePrivilege;
+-    LUID SeCreateGlobalPrivilege;
+-    LUID SeTrustedCredManAccessPrivilege;
+-    LUID SeRelabelPrivilege;
+-    LUID SeIncreaseWorkingSetPrivilege;
+-    LUID SeTimeZonePrivilege;
+-    LUID SeCreateSymbolicLinkPrivilege;
+-    PSID SeIUserSid;
+-    PSID SeUntrustedMandatorySid;
+-    PSID SeLowMandatorySid;
+-    PSID SeMediumMandatorySid;
+-    PSID SeHighMandatorySid;
+-    PSID SeSystemMandatorySid;
+-    PSID SeOwnerRightsSid;
+-    PSID SeAllAppPackagesSid;
+-    PSID SeUserModeDriversSid;
+-    PSID SeProcTrustWinTcbSid;
+-    PSID SeTrustedInstallerSid;
+-    LUID SeDelegateSessionUserImpersonatePrivilege;
+-    PSID SeAppSiloSid;
+-    PSID SeAppSiloVolumeRootMinimalCapabilitySid;
+-    PSID SeAppSiloProfilesRootMinimalCapabilitySid;
+-    PSID SeAppSiloPromptForAccessCapabilitySid;
+-    PSID SeAppSiloAccessToPublisherDirectoryCapabilitySid;
+-} SE_EXPORTS, *PSE_EXPORTS;
+-
+-extern PSE_EXPORTS SeExports;
+-
+ typedef struct _EX_PUSH_LOCK EX_PUSH_LOCK, *PEX_PUSH_LOCK;
+ 
+ typedef enum _FS_FILTER_SECTION_SYNC_TYPE
+--- a/include/ddk/wdm.h
++++ b/include/ddk/wdm.h
+@@ -48,45 +48,6 @@
+ typedef LONG KPRIORITY;
+ 
+ typedef ULONG_PTR KSPIN_LOCK, *PKSPIN_LOCK;
+-
+-typedef enum _KBUGCHECK_CALLBACK_REASON
+-{
+-    KbCallbackInvalid,
+-    KbCallbackReserved1,
+-    KbCallbackSecondaryDumpData,
+-    KbCallbackDumpIo,
+-    KbCallbackAddPages,
+-    KbCallbackSecondaryMultiPartDumpData,
+-    KbCallbackRemovePages,
+-    KbCallbackTriageDumpData,
+-    KbCallbackReserved2,
+-    KbCallbackReserved3
+-} KBUGCHECK_CALLBACK_REASON;
+-
+-struct _KBUGCHECK_REASON_CALLBACK_RECORD;
+-typedef void (WINAPI *PKBUGCHECK_REASON_CALLBACK_ROUTINE)(KBUGCHECK_CALLBACK_REASON,
+-        struct _KBUGCHECK_REASON_CALLBACK_RECORD *, void *, ULONG);
+-
+-typedef struct _KBUGCHECK_REASON_CALLBACK_RECORD
+-{
+-    LIST_ENTRY Entry;
+-    PKBUGCHECK_REASON_CALLBACK_ROUTINE CallbackRoutine;
+-    UCHAR *Component;
+-    ULONG_PTR Checksum;
+-    KBUGCHECK_CALLBACK_REASON Reason;
+-    UCHAR State;
+-} KBUGCHECK_REASON_CALLBACK_RECORD, *PKBUGCHECK_REASON_CALLBACK_RECORD;
+-
+-typedef enum _KBUGCHECK_BUFFER_DUMP_STATE
+-{
+-    BufferEmpty,
+-    BufferInserted,
+-    BufferStarted,
+-    BufferFinished,
+-    BufferIncomplete
+-} KBUGCHECK_BUFFER_DUMP_STATE;
+-
+-#define KeInitializeCallbackRecord(record) ((record)->State = BufferEmpty)
+ 
+ typedef ULONG_PTR ERESOURCE_THREAD;
+ typedef ERESOURCE_THREAD *PERESOURCE_THREAD;
+@@ -1980,15 +1941,6 @@
+ NTSTATUS  WINAPI IoSetDevicePropertyData(DEVICE_OBJECT*,const DEVPROPKEY*,LCID,ULONG,DEVPROPTYPE,ULONG,void*);
+ NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
+ 
+-void    FASTCALL KeAcquireGuardedMutex(PKGUARDED_MUTEX);
+-void    FASTCALL KeAcquireGuardedMutexUnsafe(PKGUARDED_MUTEX);
+-BOOLEAN   WINAPI KeAreAllApcsDisabled(void);
+-void      WINAPI KeEnterGuardedRegion(void);
+-void    FASTCALL KeInitializeGuardedMutex(PKGUARDED_MUTEX);
+-void      WINAPI KeLeaveGuardedRegion(void);
+-void    FASTCALL KeReleaseGuardedMutex(PKGUARDED_MUTEX);
+-void    FASTCALL KeReleaseGuardedMutexUnsafe(PKGUARDED_MUTEX);
+-BOOLEAN FASTCALL KeTryToAcquireGuardedMutex(PKGUARDED_MUTEX);
+ void    FASTCALL KeAcquireInStackQueuedSpinLockAtDpcLevel(KSPIN_LOCK*,KLOCK_QUEUE_HANDLE*);
+ #ifdef __i386__
+ void      WINAPI KeAcquireSpinLock(KSPIN_LOCK*,KIRQL*);
+@@ -1998,9 +1950,6 @@
+ #endif
+ void      WINAPI KeAcquireSpinLockAtDpcLevel(KSPIN_LOCK*);
+ void      WINAPI DECLSPEC_NORETURN KeBugCheckEx(ULONG,ULONG_PTR,ULONG_PTR,ULONG_PTR,ULONG_PTR);
+-BOOLEAN   WINAPI KeRegisterBugCheckReasonCallback(PKBUGCHECK_REASON_CALLBACK_RECORD,
+-                                                PKBUGCHECK_REASON_CALLBACK_ROUTINE,KBUGCHECK_CALLBACK_REASON,UCHAR*);
+-BOOLEAN   WINAPI KeDeregisterBugCheckReasonCallback(PKBUGCHECK_REASON_CALLBACK_RECORD);
+ BOOLEAN   WINAPI KeCancelTimer(KTIMER*);
+ void      WINAPI KeClearEvent(PRKEVENT);
+ NTSTATUS  WINAPI KeDelayExecutionThread(KPROCESSOR_MODE,BOOLEAN,LARGE_INTEGER*);
+@@ -2008,7 +1957,6 @@
+ void      WINAPI KeGenericCallDpc(PKDEFERRED_ROUTINE,PVOID);
+ ULONG     WINAPI KeGetCurrentProcessorNumber(void);
+ PKTHREAD  WINAPI KeGetCurrentThread(void);
+-NTSTATUS  WINAPI KeGetProcessorNumberFromIndex(ULONG,PPROCESSOR_NUMBER);
+ void      WINAPI KeInitializeDeviceQueue(KDEVICE_QUEUE*);
+ void      WINAPI KeInitializeDpc(KDPC*,PKDEFERRED_ROUTINE,void*);
+ void      WINAPI KeInitializeEvent(PRKEVENT,EVENT_TYPE,BOOLEAN);
+@@ -2060,7 +2008,6 @@
+ 
+ void    FASTCALL ObfReferenceObject(void*);
+ void      WINAPI ObDereferenceObject(void*);
+-void      WINAPI ObDereferenceObjectDeferDelete(void*);
+ USHORT    WINAPI ObGetFilterVersion(void);
+ NTSTATUS  WINAPI ObRegisterCallbacks(POB_CALLBACK_REGISTRATION, void**);
+ NTSTATUS  WINAPI ObReferenceObjectByHandle(HANDLE,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE,PVOID*,POBJECT_HANDLE_INFORMATION);
+@@ -2078,7 +2025,6 @@
+ #define          PsGetCurrentThread() ((PETHREAD)KeGetCurrentThread())
+ HANDLE    WINAPI PsGetCurrentProcessId(void);
+ HANDLE    WINAPI PsGetCurrentThreadId(void);
+-PVOID     WINAPI PsGetCurrentThreadTeb(void);
+ HANDLE    WINAPI PsGetProcessInheritedFromUniqueProcessId(PEPROCESS);
+ BOOLEAN   WINAPI PsGetVersion(ULONG*,ULONG*,ULONG*,UNICODE_STRING*);
+ NTSTATUS  WINAPI PsTerminateSystemThread(NTSTATUS);
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -1048,7 +1048,7 @@
+     {
+     case SEC_IMAGE:
+         if (flags & (SEC_WRITECOMBINE | SEC_LARGE_PAGES)) break;
+-        if (handle) return SEC_FILE | SEC_IMAGE | (flags & SEC_NOCACHE);
++        if (handle) return SEC_FILE | SEC_IMAGE;
+         set_error( STATUS_INVALID_FILE_FOR_SECTION );
+         return 0;
+     case SEC_COMMIT:
+--- a/server/msync.c
++++ b/server/msync.c
+@@ -177,14 +177,7 @@
+ {
+     if (pool->count == 0)
+     {
+-        static int warned;
+-
+-        /* Once: it used to print on every allocation past the pool. */
+-        if (!warned)
+-        {
+-            warned = 1;
+-            fprintf( stderr, "msync: warn: node memory pool exhausted\n" );
+-        }
++        fprintf( stderr, "msync: warn: node memory pool exhausted\n" );
+         return malloc( sizeof(struct tid_node) );
+     }
+     return pool->free_nodes[--pool->count];
+@@ -232,17 +225,8 @@
+ 
+ static inline void add_tid( unsigned int shm_idx, int tid )
+ {
+-    struct tid_node *new_node, *node;
++    struct tid_node *new_node;
+     struct tid_list *list = get_tid_list( shm_idx );
+-
+-    /* Endfield_FineWine: a multi-object wait that returns early (an object became available
+-     * while the client spun) leaves its registration here, and nothing removes it until the
+-     * object is signaled. On an object that is rarely signaled (a quit event, say) each lost
+-     * race added another node for the same thread, without bound: the pool ran out and the
+-     * wineserver grew by megabytes a second. One node per thread is enough to wake it, so
+-     * don't add a second. The client is unchanged, so waits behave exactly as before. */
+-    for (node = list->head; node; node = node->next)
+-        if (node->tid == tid) return;
+ 
+     new_node = pool_alloc();
+     new_node->tid = tid;

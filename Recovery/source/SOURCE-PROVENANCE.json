@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "release": "v0.4.0-recovery",
+  "baseline": {
+    "archive": "wine-11.16-source.tar.gz",
+    "sha256": "2b6d5cff784cb774f7f17b9a640b123ca8361d89c4280c0021b70bb6f3cd1b1c",
+    "repository": "https://github.com/wine-mirror/wine",
+    "tag": "wine-11.16"
+  },
+  "description": "Complete Wine source union with exact retained historical source variants. Not a claim that one union build produced all frozen runtime modules.",
+  "variants": {
+    "ntoskrnl": {
+      "retained_source_project_relative": "evidence/wine-recovery-20261023/context-thunk-v2/source",
+      "source_files": 12453,
+      "patch_sha256": "b2847ab3e09d9276eb9146a7b0ce710bfdf17b03ddeb0c8aed574a932f6946d1",
+      "source_manifest_sha256": "39f8ba0a9ed97498756de987fe69c5941627585c5654ad35f414b173e8276477",
+      "full_tree_reconstruction_verified": true
+    },
+    "ntdll": {
+      "retained_source_project_relative": "evidence/wine-recovery-20261023/rex-nop-context/source",
+      "source_files": 12453,
+      "patch_sha256": "27a6b020d19ab0e817b5bd08b41caaf7a12624824f9ef90c815cf0849739031b",
+      "source_manifest_sha256": "206b0047bb4e256b15e85a0a57eeb1df94fd665e994875b34d44075d3d0bcdc1",
+      "full_tree_reconstruction_verified": true
+    },
+    "wineserver": {
+      "retained_source_project_relative": "evidence/ace-native-comparison-20261018/noexec-view-candidate/source",
+      "source_files": 12453,
+      "patch_sha256": "9171d1986fc85125dfe3b0cedf3487138abf468d572ce0af518e45a18456a0d0",
+      "source_manifest_sha256": "505936070eeb7aaff4c1828097804096d794c76aeb6a71e2429dbb406e6bbeb4",
+      "full_tree_reconstruction_verified": true
+    },
+    "desktop": {
+      "retained_source_project_relative": "build/wine-wine-11.16",
+      "source_files": 12446,
+      "patch_sha256": "496cc80a25abc423412f414996aa44deccf8cd485f6e66eec0b7eb5c0353a64d",
+      "source_manifest_sha256": "02fcc2481f71bedf35299626f5b4143c114d4e075997b951f8fee6e8c3b32729",
+      "full_tree_reconstruction_verified": true
+    },
+    "auth": {
+      "retained_source_project_relative": "evidence/ace-directions-20261015/upstream/wine11.16-real-auth-backport-v2/source",
+      "source_files": 12458,
+      "patch_sha256": "b47c7362617b1614fa70b09c57d9d8a99ed805ed95b4927c18828ec567a3ba2f",
+      "source_manifest_sha256": "adda61ceff6118d795489e7a9026a8e43b39b99546692f7839c5fab8c4105358",
+      "full_tree_reconstruction_verified": true
+    }
+  },
+  "aggregate_patch_sha256": "7f594e123ed62a5e2fa2b405e58d588444a634a3682264550c8d349e2a5dcc2b",
+  "canonical_files": 12461,
+  "bit_identical_rebuild_claim": false,
+  "aggregate_patch_full_tree_reconstruction_verified": true,
+  "release_readiness": "complete_corresponding_source_prepared",
+  "runtime_snapshot": "0.4.0-recovery-release-20261024",
+  "build_records": "MODULE-BUILD-RECORDS.json",
+  "build_records_sha256": "913cdb346ec2c2ae02a4681f9daf7ef468c6f576ec172abf94b26ad55b5e2b44",
+  "public_build_script": "tools/build-recovery-wine.sh",
+  "public_build_script_sha256": "fad3165697184718094a68ea302cdc5ed56340cfd4c77ca3836584c603f7b3b5",
+  "modified_runtime_modules": [
+    {
+      "path": "lib/wine/x86_64-windows/ntoskrnl.exe",
+      "sha256": "780add78757dc32d95d90eb2af2ed7225cf9c5e6794ef64d4f3f2ac9f3305cfa",
+      "variant": "ntoskrnl",
+      "build_record": "ntoskrnl"
+    },
+    {
+      "path": "lib/wine/x86_64-unix/ntdll.so",
+      "sha256": "81d7819378bb2bcfdc625f63876dd2a776b06f46cfe88fd933f25f477e618133",
+      "variant": "ntdll",
+      "build_record": "ntdll"
+    },
+    {
+      "path": "bin/wineserver",
+      "sha256": "127a1268422f284401456cb5b78b2550d5ef85417ceb8f52a94e59b8a8be8ae7",
+      "variant": "wineserver",
+      "build_record": "wineserver"
+    },
+    {
+      "path": "lib/wine/x86_64-unix/winemac.so",
+      "sha256": "36b94982c097dda0b9de72a84fd5575eccb6913827e5e397144ece84df7d769d",
+      "variant": "desktop",
+      "build_record": "desktop"
+    },
+    {
+      "path": "lib/wine/x86_64-windows/kernel32.dll",
+      "sha256": "b35192e7fcac3c4e294f75fd83497d0df8489a4c39b9d2a60cc02606857be5ac",
+      "variant": "desktop",
+      "build_record": "desktop"
+    },
+    {
+      "path": "lib/wine/x86_64-windows/lsass.exe",
+      "sha256": "6eebc524741e4b513f3b4ea0c17964b2137ba6093eff363f6891e78b30ece125",
+      "variant": "auth",
+      "build_record": "auth"
+    },
+    {
+      "path": "lib/wine/x86_64-windows/secur32.dll",
+      "sha256": "72ecf96595fd0e584752828f9e04165e95d9d84166984e18e69674a681ffff60",
+      "variant": "auth",
+      "build_record": "auth"
+    },
+    {
+      "path": "lib/wine/x86_64-windows/msv1_0.dll",
+      "sha256": "a9e4503dfba412b775543fc7924d2b0b5ea31207a57b52f28bd025bb97a7f1ed",
+      "variant": "auth",
+      "build_record": "auth"
+    },
+    {
+      "path": "lib/wine/x86_64-unix/secur32.so",
+      "sha256": "37828e4cafbaa146c4c55dbbb74a2e3a784bf58cbf6cfee3d84b4853669f53f9",
+      "variant": "auth",
+      "build_record": "portable_secur32"
+    },
+    {
+      "path": "lib/wine/x86_64-unix/msv1_0.so",
+      "sha256": "7ccfbd38afa85cebafe28366334627c3bcf541bd89681fd87acdb4234c673e43",
+      "variant": "auth",
+      "build_record": "auth"
+    }
+  ],
+  "unmodified_runtime_components": "Upstream Wine/Gcenx dependency components and separately documented DXMT/MoltenVK; see THIRD_PARTY.md and GRAPHICS-PROVENANCE.json."
+}

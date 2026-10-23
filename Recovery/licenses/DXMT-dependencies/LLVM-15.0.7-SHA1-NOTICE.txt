@@ -1,0 +1,18 @@
+Source: https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/SHA1.cpp
+
+//====- SHA1.cpp - Private copy of the SHA1 implementation ---*- C++ -* ======//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// This code is taken from public domain
+// (http://oauth.googlecode.com/svn/code/c/liboauth/src/sha1.c and
+// http://cvsweb.netbsd.org/bsdweb.cgi/src/common/lib/libc/hash/sha1/sha1.c?rev=1.6)
+// and modified by wrapping it in a C++ interface for LLVM,
+// and removing unnecessary code.
+//
+//===----------------------------------------------------------------------===//
+

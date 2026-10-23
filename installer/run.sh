@@ -1,37 +1,38 @@
 #!/bin/bash
 set -euo pipefail
-INSTALL_ROOT="$(cd "$(dirname "$0")" && pwd)"
-action="${1:?mode}"
-case "$action" in Vulkan|DirectX11) selected="$action";; Update)
-  selected=Vulkan; [ ! -d "$INSTALL_ROOT/DirectX11" ] || selected=DirectX11;; *) exit 1;; esac
-source "$INSTALL_ROOT/$selected/common.sh"
-check_idle
-wine_status=0
-if [ "$action" = Update ]; then
-  STATE="$INSTALL_ROOT/Updater/local"; export WINEPREFIX="$STATE/prefix"
-  launcher_environment
-  cd "$INSTALL_ROOT/Launcher"
-  "$WINE_ROOT/bin/wine" ./Launcher.exe || wine_status=$?
-else
-  [ "$(readlink "$INSTALL_ROOT/Launcher/games/Arknights Endfield")" = "$INSTALL_ROOT/Game" ] || {
-    echo '官方安装目录映射已变化。请检查共享目录，不会启动可能过期的另一份游戏。'; exit 2;
-  }
-  [ -f "$INSTALL_ROOT/Game/Endfield.exe" ] && [ -d "$INSTALL_ROOT/Game/Endfield_Data" ] || {
-    echo '游戏尚未下载完成，或安装路径发生变化。请先打开“更新与修复”，在默认目录下载并完成官方校验。'; exit 2;
-  }
-  cd "$WINEPREFIX/drive_c/Endfield"
-  if [ "$action" = Vulkan ]; then
-    game_environment
-    flag=-force-vulkan
-  else
-    export WINEDLLOVERRIDES='d3d11,dxgi,winemetal=b' ENDFIELD_DXMT_DRAWABLE_COUNT=2
-    flag=-force-d3d11
-  fi
-  "$WINE_ROOT/bin/wine" 'C:\Endfield\Endfield.exe' "$flag" || wine_status=$?
+INSTALL_ROOT="$(cd "$(dirname "$0")" && pwd -P)"
+source "$INSTALL_ROOT/common.sh"
+# Legacy shortcuts remain compatible, but never override the official checkbox.
+case "${1:-Launcher}" in Launcher|Update|Vulkan|DirectX11|--check) ;; *) fail '未知启动操作。';; esac
+RECOVERY="$INSTALL_ROOT/Recovery"
+WINE_ROOT="$RECOVERY/runtime/Wine Devel.app/Contents/Resources/wine"
+PREFIX="$INSTALL_ROOT/State/prefix"
+assert_platform
+validate_path "$INSTALL_ROOT"
+verify_installation
+if [ "${1:-}" = --check ]; then
+  echo '配置检查通过：官方启动器，未勾选 DX11 为 Vulkan，勾选为 DX11/DXMT。'
+  exit 0
 fi
-# Launcher.exe can return before Games.exe; retain the application lock until Wine finishes.
-"$WINE_ROOT/bin/wineserver" -w || {
-  wait_status=$?
-  [ "$wine_status" != 0 ] || wine_status="$wait_status"
-}
-exit "$wine_status"
+if [ "${ENDFIELD_LOCK_HELD:-}" != 1 ]; then
+  exec "$INSTALL_ROOT/Apps/终末地.app/Contents/MacOS/EndfieldInstaller" --with-lock "$INSTALL_ROOT" "$INSTALL_ROOT/run.sh" Launcher
+fi
+assert_idle
+mkdir -p "$INSTALL_ROOT/logs"
+SESSION="$(mktemp -d "$INSTALL_ROOT/logs/session-$(date +%Y%m%d-%H%M%S).XXXXXX")"
+mkdir "$SESSION/capture"
+# Keep only the last four completed sessions plus the new session.
+completed=()
+for dir in "$INSTALL_ROOT"/logs/session-*; do
+  [ -d "$dir" ] && [ ! -L "$dir" ] && [ -f "$dir/completed" ] && completed+=("$dir")
+done
+for (( i=0; i<${#completed[@]}-4; i++ )); do rm -rf "${completed[$i]}"; done
+load_environment
+status=0
+cd "$INSTALL_ROOT/Launcher"
+echo "正在打开官方启动器。本次日志：$SESSION/run.log"
+"$WINE_ROOT/bin/wine" 'C:\Hypergryph Launcher\Launcher.exe' >"$SESSION/run.log" 2>&1 || status=$?
+# Launcher.exe may return before Games.exe or the game; keep the lock until Wine ends.
+"$WINE_ROOT/bin/wineserver" -w >>"$SESSION/run.log" 2>&1 || status=$?
+printf '%s\n' "$status" >"$SESSION/completed"
+exit "$status"

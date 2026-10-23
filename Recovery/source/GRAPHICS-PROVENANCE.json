@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "release": "v0.4.0-recovery",
+  "verification_date": "2026-10-23",
+  "runtime_root": "Recovery/runtime/Wine Devel.app/Contents/Resources/wine",
+  "dxmt": {
+    "version": "v0.80",
+    "commit": "589adb780354b461645b29999cefaf533594ee99",
+    "repository": "https://github.com/3Shain/dxmt",
+    "binary_url": "https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz",
+    "binary_archive_sha256": "8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d",
+    "modified": false,
+    "files": [
+      {
+        "runtime_path": "lib/wine/x86_64-windows/d3d11.dll",
+        "upstream_archive_member": "v0.80/x86_64-windows/d3d11.dll",
+        "sha256": "7ca382af0eb32d8a432f6efb14d594fefb45673663be1f7e6682254bff885c47",
+        "identical_to_upstream": true
+      },
+      {
+        "runtime_path": "lib/wine/x86_64-windows/dxgi.dll",
+        "upstream_archive_member": "v0.80/x86_64-windows/dxgi.dll",
+        "sha256": "fc58aae0aba511a1ec4d2417e5bba6adb888bb14315d0f59cccdfd27f670d544",
+        "identical_to_upstream": true
+      },
+      {
+        "runtime_path": "lib/wine/x86_64-windows/winemetal.dll",
+        "upstream_archive_member": "v0.80/x86_64-windows/winemetal.dll",
+        "sha256": "514245d533c750599614311a792c45ed600aef52948571d98c0fc70fd3df16e0",
+        "identical_to_upstream": true
+      },
+      {
+        "runtime_path": "lib/wine/x86_64-unix/winemetal.so",
+        "upstream_archive_member": "v0.80/x86_64-unix/winemetal.so",
+        "sha256": "3d50d7f39c64778c71d0af2fce1cde818d09ffbce7c4f7b8ae24ae1df567c0ca",
+        "identical_to_upstream": true
+      }
+    ],
+    "source_archive": {
+      "name": "dxmt-v0.80-source.tar.gz",
+      "bytes": 655666,
+      "sha256": "79cd3a2b32749fc3890b6c2a9337f45de26fdb750014f3457bb7ebafa679492d",
+      "upstream_url": "https://github.com/3Shain/dxmt/archive/refs/tags/v0.80.tar.gz",
+      "regular_source_files_verified_against_retained_source": 329,
+      "includes_submodules": false,
+      "includes_llvm_source": false,
+      "upstream_commit_blob_hashes_verified": 329
+    },
+    "build_recipe": "https://github.com/3Shain/dxmt/blob/589adb780354b461645b29999cefaf533594ee99/.github/workflows/ci.yml",
+    "dependency_sources": [
+      {
+        "path": "include/native/directx",
+        "repository": "https://github.com/misyltoad/mingw-directx-headers",
+        "commit": "9df86f2341616ef1888ae59919feaa6d4fad693d"
+      },
+      {
+        "path": "external/nvapi",
+        "repository": "https://github.com/NVIDIA/nvapi",
+        "commit": "d08488fcc82eef313b0464db37d2955709691e94",
+        "note": "Upstream optional submodule. This release does not install NVAPI or NGX."
+      },
+      {
+        "component": "LLVM",
+        "repository": "https://github.com/llvm/llvm-project",
+        "tag": "llvmorg-15.0.7",
+        "basis": "Upstream v0.80 CI LLVM_VERSION; binaries reused without local rebuilding."
+      }
+    ],
+    "recompiled_for_this_release": false,
+    "bit_identical_rebuild_claim": false
+  },
+  "moltenvk": {
+    "version": "1.4.2-Endfield",
+    "runtime_path": "lib/libMoltenVK.dylib",
+    "sha256": "1cf987832fc970cd1ed842fadc3a68796c39d4c173209e6a1eee9b04ca8e554d",
+    "identical_to_v0_3_runtime_archive": true,
+    "previous_runtime_archive": "Wine_Endfield-Vulkan-v0.3.0-preview.tar.xz",
+    "source_archive": {
+      "name": "MoltenVK-1.4.2-Endfield-v0.3.0-source.tar.xz",
+      "bytes": 8825756,
+      "sha256": "b24254c87e0219cf32ce1282a3190aadce2f923c555ed49517e69df235a4aa84",
+      "unchanged_from_v0_3": true,
+      "includes_fixed_dependencies": true,
+      "source_files": 7358,
+      "regular_file_hashes_verified": 7358
+    },
+    "components": [
+      {
+        "path": ".",
+        "repository": "https://github.com/KhronosGroup/MoltenVK",
+        "commit": "db66022459ffb663aa2b50f6b018bc2e124f5edf",
+        "source_files": 280
+      },
+      {
+        "path": "External/SPIRV-Cross",
+        "repository": "https://github.com/KhronosGroup/SPIRV-Cross",
+        "commit": "6c09849fe88c48eaed08413aa022aaa136a3a057",
+        "source_files": 4772
+      },
+      {
+        "path": "External/SPIRV-Tools",
+        "repository": "https://github.com/KhronosGroup/SPIRV-Tools",
+        "commit": "0d6fd73ca73830ccab5fa1f00ed5ed40124e2c55",
+        "source_files": 1743
+      },
+      {
+        "path": "External/SPIRV-Tools/external/spirv-headers",
+        "repository": "https://github.com/KhronosGroup/SPIRV-Headers",
+        "commit": "29981f65241605e08b0ede4cfeb999fe3b723c6a",
+        "source_files": 120
+      },
+      {
+        "path": "External/Vulkan-Headers",
+        "repository": "https://github.com/KhronosGroup/Vulkan-Headers",
+        "commit": "e3b1eec08173d6b825cd3ac88c885a63b621504a",
+        "source_files": 89
+      },
+      {
+        "path": "External/Vulkan-Tools",
+        "repository": "https://github.com/KhronosGroup/Vulkan-Tools",
+        "commit": "8c66b352925cb771f793a4d3220b1321ae0febf1",
+        "source_files": 133
+      },
+      {
+        "path": "External/Volk",
+        "repository": "https://github.com/zeux/volk",
+        "commit": "776893306c5d3b22b6185b5d4a258b81d94572bf",
+        "source_files": 21
+      },
+      {
+        "path": "External/cereal",
+        "repository": "https://github.com/USCiLab/cereal",
+        "commit": "a56bad8bbb770ee266e930c95d37fff2a5be7fea",
+        "source_files": 210
+      }
+    ],
+    "patches": {
+      "moltenvk-1.4.2-endfield.patch": "e4f363ce09e10f342f316148cd694b6685d92c7b68a4b0df860f7e032e4a1bf2",
+      "spirv-cross-device-barrier.patch": "01c9a7617b642d03c6c371e13b700de61a2bb7443950a6dc620786ec9e61d48e"
+    },
+    "source_details": "Vulkan/source/SOURCE-PROVENANCE.json",
+    "build_recipe": "tools/build-moltenvk.sh",
+    "recompiled_for_this_release": false,
+    "bit_identical_rebuild_claim": false
+  },
+  "wine_bridge_note": "winemac.so is a modified Wine module and is covered by the separate Wine recovery source manifest, not by the upstream DXMT source archive.",
+  "license_details": "Recovery/source/GRAPHICS-LICENSES.json"
+}

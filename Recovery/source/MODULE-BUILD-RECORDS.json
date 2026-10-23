@@ -1,0 +1,248 @@
+{
+  "schema": 1,
+  "release": "v0.4.0-recovery",
+  "scope": "Sanitized historical build evidence and portable GnuTLS rebuild; the public build script is a reproducible recipe, not a byte-identical rebuild claim.",
+  "records": {
+    "ntoskrnl": {
+      "source_variant": "ntoskrnl",
+      "historical_record_sha256": "4841ea4a18ca881650682fdf50e8c20579f7610eae99d06515304543747ffdbe",
+      "commands": [
+        {
+          "label": "configure",
+          "argv": [
+            "${PROJECT_ROOT}/evidence/wine-recovery-20261023/context-thunk-v2/source/configure",
+            "--build=x86_64-apple-darwin25.6.0",
+            "--host=x86_64-apple-darwin25.6.0",
+            "--enable-win64",
+            "--enable-archs=x86_64",
+            "--disable-tests",
+            "--without-x",
+            "--without-gstreamer",
+            "--without-gnutls",
+            "--without-freetype",
+            "--without-sdl",
+            "--without-vulkan",
+            "--enable-werror"
+          ],
+          "exit": 0,
+          "seconds": 37.705727540999995
+        },
+        {
+          "label": "make",
+          "argv": [
+            "make",
+            "-j4",
+            "dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe"
+          ],
+          "exit": 0,
+          "seconds": 11.544553708000002
+        }
+      ]
+    },
+    "ntdll": {
+      "source_variant": "ntdll",
+      "historical_record_sha256": "77ee5be776417b9f333528dec922637da8d6cf2cf1a0c897ab00d783122508e8",
+      "commands": [
+        {
+          "label": "configure",
+          "argv": [
+            "${PROJECT_ROOT}/evidence/wine-recovery-20261023/rex-nop-context/source/configure",
+            "--build=x86_64-apple-darwin25.6.0",
+            "--host=x86_64-apple-darwin25.6.0",
+            "--enable-win64",
+            "--enable-archs=none",
+            "--disable-tests",
+            "--without-x",
+            "--without-gstreamer",
+            "--without-gnutls",
+            "--without-freetype",
+            "--without-sdl",
+            "--without-vulkan",
+            "--enable-werror"
+          ],
+          "exit": 0,
+          "seconds": 35.840374125000004
+        },
+        {
+          "label": "make",
+          "argv": [
+            "make",
+            "-j4",
+            "dlls/ntdll/ntdll.so"
+          ],
+          "exit": 2,
+          "seconds": 1.1712957920000022
+        },
+        {
+          "label": "configure-unix-baseline",
+          "argv": [
+            "${PROJECT_ROOT}/evidence/wine-recovery-20261023/rex-nop-context/source/configure",
+            "--build=x86_64-apple-darwin25.6.0",
+            "--host=x86_64-apple-darwin25.6.0",
+            "--enable-win64",
+            "--enable-archs=x86_64",
+            "--disable-tests",
+            "--without-x",
+            "--without-gstreamer",
+            "--without-gnutls",
+            "--without-freetype",
+            "--without-sdl",
+            "--without-vulkan",
+            "--enable-werror"
+          ],
+          "exit": 0,
+          "seconds": 52.466153083
+        },
+        {
+          "label": "make-unix-baseline",
+          "argv": [
+            "make",
+            "-f",
+            "Makefile",
+            "-f",
+            "${PROJECT_ROOT}/evidence/wine-recovery-20261023/rex-nop-context/build-overrides.mk",
+            "-j4",
+            "dlls/ntdll/ntdll.so"
+          ],
+          "exit": 0,
+          "seconds": 6.332519791999999
+        },
+        {
+          "label": "make-runtime-source-aligned",
+          "argv": [
+            "make",
+            "-f",
+            "Makefile",
+            "-f",
+            "${PROJECT_ROOT}/evidence/wine-recovery-20261023/rex-nop-context/build-overrides.mk",
+            "-j4",
+            "dlls/ntdll/ntdll.so"
+          ],
+          "exit": 0,
+          "seconds": 0.88123975
+        },
+        {
+          "label": "make-final-restored-virtual",
+          "argv": [
+            "make",
+            "-f",
+            "Makefile",
+            "-f",
+            "${PROJECT_ROOT}/evidence/wine-recovery-20261023/rex-nop-context/build-overrides.mk",
+            "-j4",
+            "dlls/ntdll/ntdll.so"
+          ],
+          "exit": 0,
+          "seconds": 1.6890089160000001
+        }
+      ]
+    },
+    "wineserver": {
+      "source_variant": "wineserver",
+      "historical_record_sha256": "bc24a1553a6ea43ba1a8e17ef488bc9f171f6a6bdc9a066ce5d2dd10733404b1",
+      "commands": [
+        {
+          "label": "configure",
+          "argv": [
+            "${PROJECT_ROOT}/evidence/ace-native-comparison-20261018/noexec-view-candidate/source/configure",
+            "--build=x86_64-apple-darwin25.6.0",
+            "--host=x86_64-apple-darwin25.6.0",
+            "--enable-win64",
+            "--enable-archs=none",
+            "--disable-tests",
+            "--without-x",
+            "--without-gstreamer",
+            "--without-gnutls",
+            "--without-freetype",
+            "--without-sdl",
+            "--without-vulkan"
+          ],
+          "exit": 0,
+          "seconds": 24.181285125000002,
+          "log_sha256": "3c581b103793cd27a42e9af68dddff79e077470ee4013dbd07f2cdbeea855ae9"
+        },
+        {
+          "label": "make",
+          "argv": [
+            "make",
+            "-j4",
+            "dlls/ntdll/ntdll.so",
+            "server/wineserver"
+          ],
+          "exit": 0,
+          "seconds": 6.493811999999998,
+          "log_sha256": "86e1f4f4e83d2b6f0bab1851127d4bd69166158de8b26f6a931b2653dfc5484f"
+        }
+      ]
+    },
+    "desktop": {
+      "source_variant": "desktop",
+      "source_tree": "build/wine-wine-11.16",
+      "modules": [
+        "winemac.so",
+        "kernel32.dll"
+      ],
+      "recipe": "tools/build-recovery-wine.sh winemac / kernel32; configure flags retained from tools/build-overlay.sh",
+      "evidence": "The frozen winemac has the DXMT bridge and frame diagnostics but not the later ENDFIELD_DXMT_DRAWABLE_COUNT modification in the old v0.3 DirectX11 overlay. The desktop variant preserves this earlier source. Frozen kernel32.dll is identical to both old overlays.",
+      "historical_full_build_transcript_included": false,
+      "bit_identical_rebuild_claim": false
+    },
+    "auth": {
+      "source_variant": "auth",
+      "historical_configure_argv": [
+        "${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.16-real-auth-backport-v2/source/configure",
+        "--build=x86_64-apple-darwin25.6.0",
+        "--host=x86_64-apple-darwin25.6.0",
+        "--enable-win64",
+        "--enable-archs=x86_64",
+        "--disable-tests",
+        "--with-vulkan",
+        "--with-coreaudio",
+        "--with-freetype",
+        "--with-gnutls",
+        "--without-x",
+        "--without-wayland",
+        "--without-gstreamer",
+        "--without-sdl",
+        "--prefix=${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.16-real-auth-backport-v2/install"
+      ],
+      "historical_environment": {
+        "PATH": "${PROJECT_ROOT}/build/tools/bin:${PROJECT_ROOT}/build/llvm-mingw-20260826-ucrt-macos-universal/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "BISON_PKGDATADIR": "${PROJECT_ROOT}/build/tools/share/bison",
+        "CC": "/usr/bin/clang -arch x86_64",
+        "CXX": "/usr/bin/clang++ -arch x86_64",
+        "CFLAGS": "-O2",
+        "CXXFLAGS": "-O2",
+        "CPPFLAGS": "-I${PROJECT_ROOT}/release-artifacts/v0.3.0-preview-sources/MoltenVK-1.4.2-Endfield-v0.3.0-source/External/Vulkan-Headers/include",
+        "LDFLAGS": "-L${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib",
+        "FREETYPE_CFLAGS": "-I${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/freetype-freetype-526ec5c/include",
+        "FREETYPE_LIBS": "-L${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib -lfreetype",
+        "GNUTLS_CFLAGS": "-I${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/generated-include",
+        "GNUTLS_LIBS": "-L${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib -lgnutls",
+        "ac_cv_lib_soname_gnutls": "${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib/libgnutls.30.dylib",
+        "ac_cv_lib_soname_freetype": "${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib/libfreetype.6.dylib",
+        "ac_cv_lib_soname_vulkan": "${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib/libvulkan.1.4.350.dylib"
+      },
+      "note": "Historical absolute dependency directories are evidence only. The public recipe replaces the GnuTLS/FreeType/Vulkan SONAME cache values with runtime-relative paths; only secur32.so was rebuilt for this release."
+    },
+    "portable_secur32": {
+      "source_variant": "auth",
+      "source_C_changed": false,
+      "configuration_change": {
+        "macro": "SONAME_LIBGNUTLS",
+        "value": "@loader_path/../../libgnutls.30.dylib"
+      },
+      "executed_commands_sanitized": [
+        "/usr/bin/clang -arch x86_64 -std=gnu23 -m64 -c -o dlls/secur32/schannel_gnutls.o ${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.16-real-auth-backport-v2/source/dlls/secur32/schannel_gnutls.c    -Idlls/secur32    -I${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.16-real-auth-backport-v2/source/dlls/secur32    -Iinclude    -I${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.16-real-auth-backport-v2/source/include    -D__WINESRC__ -DWINE_UNIX_LIB    -I${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/generated-include    -Wall -pipe -fcf-protection=none -fvisibility=hidden -fno-stack-protector -fno-strict-aliasing    -Wdeclaration-after-statement -Wempty-body -Wignored-qualifiers -Winit-self -Wpointer-arith    -Wstrict-prototypes -Wtype-limits -Wunused-but-set-parameter -Wvla -Wwrite-strings -fPIC    -fasynchronous-unwind-tables    -I${PROJECT_ROOT}/release-artifacts/v0.3.0-preview-sources/MoltenVK-1.4.2-Endfield-v0.3.0-source/External/Vulkan-Headers/include    -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0",
+        "/usr/bin/clang -arch x86_64 -std=gnu23 -m64 -o dlls/secur32/secur32.so -dynamiclib -install_name @rpath/secur32.so -Wl,-rpath,@loader_path\\/    dlls/secur32/schannel_gnutls.o dlls/ntdll/ntdll.so -L${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib"
+      ],
+      "compiler_version": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+      "compiled_output_before_signature_sha256": "957e3bf703ea6fcf6735d7ebd19dbef84ca49361e67e61c5768f09ef21c6d031",
+      "signed_runtime_sha256": "37828e4cafbaa146c4c55dbbb74a2e3a784bf58cbf6cfee3d84b4853669f53f9",
+      "historical_auth_build_unsigned_sha256": "e4488da437c53b1cf6ae7bd70b40f9ae8a077d1879bcd9efb5ed43a8f392ed5c",
+      "previous_frozen_runtime_signed_sha256": "57174676c2593e6241ac405a1761f4290d697058726aa4c003846fb6cc5e511d",
+      "link_inputs": "Historical auth-v2 ntdll.so retained only as link input; the tested runtime ntdll was not rebuilt or replaced.",
+      "runtime_validation": "See release VALIDATION.md; source packaging itself does not run Wine."
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "files": [
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-LICENSE.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/LICENSE.TXT",
+      "sha256": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-regex-COPYRIGHT.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/COPYRIGHT.regex",
+      "sha256": "0424e57d4303164dc59a8509c20dae0518b853692e5c2b0e98b11816fdbc97c7"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-BLAKE3-LICENSE.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/BLAKE3/LICENSE",
+      "sha256": "6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/MinGW-directx-COPYING.txt",
+      "upstream": "https://raw.githubusercontent.com/misyltoad/mingw-directx-headers/9df86f2341616ef1888ae59919feaa6d4fad693d/COPYING.MinGW-w64.txt",
+      "sha256": "f38e6194bd3bfa1b654f118e5acefe0aead437bbe669eee43957ccc65a7127f1"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/CC0-1.0.txt",
+      "upstream": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/CC0-1.0.txt",
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-ConvertUTF-NOTICE.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/ConvertUTF.cpp",
+      "sha256": "6b6cbb17a369fe220856f0f1afdd2e103c6c81e713885ee3684cf27bce01ecab"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-xxhash-NOTICE.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/xxhash.cpp",
+      "sha256": "4e70f1df8e4d8bcfab8f18497a1f730bcf6f9baffd99db6e2021a929571232f2"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-MD5-NOTICE.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/MD5.cpp",
+      "sha256": "da791c635fa903d1ddb047c0b7b376ddc738393c19f6bce01f093dd66e8f2265"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-SHA1-NOTICE.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/SHA1.cpp",
+      "sha256": "6af385949ef234107ac2b0e50877ead0e559f14d2c810e7448c22cc6aa83bcab"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/LLVM-15.0.7-SHA256-NOTICE.txt",
+      "upstream": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-15.0.7/llvm/lib/Support/SHA256.cpp",
+      "sha256": "d78610618027250a7080f52b6cbbb878419deca2b31f651cdea1fefd468411f1"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/DXVK-zlib.txt",
+      "upstream": "https://github.com/3Shain/dxmt/blob/589adb780354b461645b29999cefaf533594ee99/src/util/dxvk.LICENSE",
+      "sha256": "03ca4af84f5cd28cef3ed3f1ef4d17996992d35ccdbe82b29cc020ca02c16f3d"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/SHA256-NOTICE.txt",
+      "sha256": "2791c367115a13cc3fcc4b5833e8ec2c98d8b5f0518eb85cc418160fbf6321f2"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/generator-NOTICE.txt",
+      "sha256": "6da6afd7bb5df9c987d3000017cb05504df9c6e73653fb0af95eeb33d290b469"
+    },
+    {
+      "path": "Recovery/licenses/DXMT-dependencies/DXBCParser-MIT.txt",
+      "source": "DXMT v0.80 libs/DXBCParser file headers specify Microsoft copyright and MIT; standard MIT terms preserved.",
+      "sha256": "7df20dcdf9197e9945c14858d41c60f11b52b93e5b69e2b63416b874d598d322"
+    }
+  ]
+}
