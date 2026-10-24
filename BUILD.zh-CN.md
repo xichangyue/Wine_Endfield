@@ -1,6 +1,6 @@
 # 自行编译（Apple Silicon / 简体中文）
 
-Release 的安装器已包含运行库，普通用户无需编译。v0.4.0 使用统一 Recovery 环境，要求 **macOS 26.0 或更新版本**及 Rosetta 2；不能通过修改版本号或 Mach-O load command 获得旧系统兼容性。
+Release 的安装器已包含运行库，普通用户无需编译。v0.4 系列使用统一 Recovery 环境，要求 **macOS 26.0 或更新版本**及 Rosetta 2；不能通过修改版本号或 Mach-O load command 获得旧系统兼容性。v0.4.1 仅关闭默认 Metal 捕获支持与自动捕获，运行库二进制及对应源码附件与 v0.4.0 相同。
 
 本教程重建项目修改的 Wine 模块和 MoltenVK。其余 Gcenx / DXMT 二进制沿用上游版本。构建输出不会自动覆盖现有安装。工具链、SDK、构建路径和签名会改变二进制哈希，本项目不承诺逐字节重现。
 

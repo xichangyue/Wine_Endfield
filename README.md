@@ -14,18 +14,18 @@ arm mac的《明日方舟：终末地》兼容层
 
 爱来自GPT-6 Astra。
 
-## v0.4.0-preview：修复版安装器（预发布）
+## v0.4.1-preview：关闭开发者授权弹窗来源（预发布）
 
-从 [v0.4.0-preview 发布页](https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.4.0-preview) 下载 **Wine_Endfield-Installer-0.4.0-preview.zip**，解压后打开“终末地 Mac 安装器.app”。需要 **Apple Silicon、macOS 26 或更新版本及 Rosetta 2**；使用者无需编译器或 Python。请勿下载 GitHub 自动生成的 Source code ZIP 作为安装器。
+从 [v0.4.1-preview 发布页](https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.4.1-preview) 下载 **Wine_Endfield-Installer-0.4.1-preview.zip**，解压后打开“终末地 Mac 安装器.app”。需要 **Apple Silicon、macOS 26 或更新版本及 Rosetta 2**；使用者无需编译器或 Python。请勿下载 GitHub 自动生成的 Source code ZIP 作为安装器。
 
-本版统一已验证的 Wine 修复运行库，修正官方启动器白屏相关图形路径和认证组件的依赖加载位置，并补充安装失败的阶段、退出码和具体错误。仅在 M1 Max / macOS 26.6.1 验证，不把此前收到的“mac 27.2 安装未完成”反馈视为已定位或已修复；若新版仍失败，请保留日志。
+本版默认关闭 Metal GPU 捕获支持，修正启动时由捕获功能触发的 DevTools 开发者授权请求，不修改系统开发者安全策略。Wine、MoltenVK、DXMT 等运行库二进制沿用 v0.4.0，官方渲染选择及自动清理策略不变。本次未修复另行记录的 Vulkan GPU Hang，也不承诺性能改善。仅在 M1 Max / macOS 26.6.1 验证，不把此前收到的“mac 27.2 安装未完成”反馈视为已定位或已修复；若新版仍失败，请保留日志。
 
-### 从 v0.2 / v0.3 升级
+### 从 v0.2 / v0.3 / v0.4.0 升级
 
 1. 正常退出游戏、官方启动器和其他 Wine 程序，外置磁盘保持连接。
 2. 打开新版安装器，选择**原安装文件夹**，即包含 `Game`、`Launcher`、`Apps` 等目录的位置，通常为 `~/Games/Wine Endfield`。不要选择其中的 `Game`、某个模式子目录或旧安装器 App。
 3. 已有官方启动器时，“官方安装包”可留空；旧安装未完成、目录中尚无 `Launcher/Launcher.exe` 时，重新选择自己从官网下载的 Windows 官方启动器 EXE。
-4. 点击更新环境。新环境准备完成后才切换；游戏文件和已有官方启动器保留。成功后只保留新版采用的用户环境，自动清除旧版本设置与缓存，不必重新下载整份游戏。旧版遗留的 `.setup-lock` 不需要手工删除。
+4. 点击更新环境。新环境准备完成后才切换；游戏文件、已有官方启动器及新版采用的用户环境和缓存保留。v0.4.0 用户的 `State/` 会沿用，新配置随运行库更新。成功后自动清除已识别的旧运行库和未采用的旧设置与缓存，不必重新下载整份游戏。旧版遗留的 `.setup-lock` 不需要手工删除。
 5. 完成后打开“终末地”入口，**在官方启动器里点击“开始游戏”**。旧版三个模式入口也会打开官方启动器；原来的直接启动游戏流程不再适用于本版。
 
 官方未勾选“DirectX 11 启动”时使用 **Vulkan / MoltenVK**；勾选时使用 **DirectX 11 / DXMT / Metal**。启动器自身使用 DXMT，不代表游戏一定在用 DX11。
@@ -43,6 +43,6 @@ arm mac的《明日方舟：终末地》兼容层
 
 ### 源码和历史版本
 
-运行包不含游戏、官方安装器、账号、个人 prefix 或预热缓存。Release 同时提供修改后的 Wine、MoltenVK 完整源码和相关上游源码；来源与许可证见 [THIRD_PARTY.md](THIRD_PARTY.md)，构建方式见 [BUILD.zh-CN.md](BUILD.zh-CN.md)。独立安装器使用 MIT，Wine 派生代码保留 LGPL，各第三方组件保留原许可。
+运行包不含游戏、官方安装器、账号、个人 prefix 或预热缓存。Release 同时提供修改后的 Wine、MoltenVK 完整源码和相关上游源码；运行库二进制未变，对应源码附件保持原名称与内容，包括 `Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz`。来源与许可证见 [THIRD_PARTY.md](THIRD_PARTY.md)，构建方式见 [BUILD.zh-CN.md](BUILD.zh-CN.md)。独立安装器使用 MIT，Wine 派生代码保留 LGPL，各第三方组件保留原许可。
 
 旧版分包仅保留作历史参考：[v0.3 文档](https://github.com/xichangyue/Wine_Endfield/blob/v0.3.0-preview/README.md)。其中“退出官方启动器后直接启动游戏”的步骤不适用于本版。

@@ -1,6 +1,6 @@
-# 终末地 Mac 安装器 0.4.0（预发布）
+# 终末地 Mac 安装器 0.4.1（预发布）
 
-本安装器包含 `0.4.0-preview-20261024` 修复运行库，支持旧版升级、自选安装目录和成功后的自动清理。保留已验证的图形与游戏核心组件，认证组件使用相对路径加载包内 GnuTLS。需要 Apple Silicon、macOS 26 或更新版本及 Rosetta 2；使用者无需安装编译器或 Python。此版未经过 Apple 公证。
+本安装器包含 `0.4.1-preview-20261025` 配置快照，默认关闭 Metal GPU 捕获支持，修正其触发的 DevTools 开发者授权请求，不修改系统开发者安全策略。运行库二进制沿用 v0.4.0；旧版升级、自选安装目录、成功后的自动清理及渲染选择保持不变。本次不包含 Vulkan GPU Hang 修复或性能优化。需要 Apple Silicon、macOS 26 或更新版本及 Rosetta 2；使用者无需安装编译器或 Python。此版未经过 Apple 公证。
 
 ## 新安装
 
@@ -13,12 +13,12 @@
 
 ## 从旧版本更新
 
-支持由 v0.2.0、v0.3.0 统一安装器创建、带 `.endfield-installer-v1` 标记的安装，以及此后新版安装。选择原安装文件夹即可；已有官方启动器时不需要重新提供 EXE。
+支持由 v0.2.0、v0.3.0、v0.4.0 统一安装器创建、带 `.endfield-installer-v1` 标记的安装，以及此后新版安装。选择原安装文件夹即可；已有官方启动器时不需要重新提供 EXE。v0.4.0 用户也需在原目录运行本安装器，让新配置替换旧版开启捕获的配置；不必手工删除环境或缓存。
 
 升级前正常退出游戏、官方启动器和其他 Wine 程序。安装器先解压、校验并配置新环境，成功后切换；失败时保留或恢复旧环境。
 
 - `Game/` 和已有 `Launcher/` 保留，游戏无需重新下载；启动器的共享游戏链接会转为相对路径。
-- 从已有 `State/` 复制用户环境；第一次从旧版升级优先复制 `Updater/local/`，缺失时依次使用 `DirectX11/local/`、`Vulkan/local/`。不会合并不同旧环境里的图形设置。成功后会删除未采用的旧版设置和缓存，只保留新版正在使用的环境。
+- 从已有 `State/` 复制用户环境和缓存，v0.4.0 用户沿用此环境；第一次从更早旧版升级优先复制 `Updater/local/`，缺失时依次使用 `DirectX11/local/`、`Vulkan/local/`。不会合并不同旧环境里的图形设置。成功后会删除未采用的旧版设置和缓存，只保留新版正在使用的环境及其缓存。
 - 已有登录数据随环境复制保留，但是否需要重新登录仍由官方启动器决定。
 - 原三个模式入口会兼容转到官方启动器。新安装只创建一个“终末地”入口。
 - 安装失败时保留或恢复原环境。新版本配置、切换和校验全部成功后，自动清理已识别的旧运行库、旧用户环境和历次 `.runtime-backups/` 中的旧组件，不保留完整旧版用于一键回退。
@@ -54,8 +54,8 @@ bash installer/test-installation.sh /完整安装目录
 ## 构建
 
 ```bash
-bash tools/package-recovery.sh /固定版本目录 /新的payload输出目录 v0.4.0-preview
-bash tools/build-installer.sh /payload输出目录 /新的安装器输出目录 v0.4.0-preview
+bash tools/package-recovery.sh /固定版本目录 /新的payload输出目录 v0.4.1-preview
+bash tools/build-installer.sh /payload输出目录 /新的安装器输出目录 v0.4.1-preview
 ```
 
-构建需要 Xcode Command Line Tools。安装器不携带官方 EXE、游戏、prefix、账号或个人缓存。源码和许可边界见 `THIRD_PARTY.md` 及 payload 的 `PACKAGE-NOTICE.txt`；对应的修改后 Wine、MoltenVK 源码及其他组件来源随 Release 提供；复用运行库无需在用户机器上编译。
+构建需要 Xcode Command Line Tools。安装器不携带官方 EXE、游戏、prefix、账号或个人缓存。源码和许可边界见 `THIRD_PARTY.md` 及 payload 的 `PACKAGE-NOTICE.txt`；对应的修改后 Wine、MoltenVK 源码及其他组件来源随 Release 提供。运行库二进制未变，源码附件继续使用原名称与内容，包括 `Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz`；复用运行库无需在用户机器上编译。

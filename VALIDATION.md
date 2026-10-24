@@ -1,3 +1,37 @@
+# v0.4.1-preview 授权请求修正验证（2026-10-25）
+
+测试设备为 Apple M1 Max / macOS 26.6.1。此版运行库二进制与 v0.4.0-preview 相同，只将 `MTL_CAPTURE_ENABLED=1` 改为 `0`、`MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE=3` 改为 `0`；其余35项运行环境值、9项核心组件校验及官方渲染选择不变。以下是本轮验证，后文旧版记录不代表重新执行。
+
+## 开发者授权请求对照
+
+系统开发者模式保持关闭，未修改系统授权策略、重置授权缓存或输入密码。因为本机此前已有一次用户授权，本轮检查 `taskgated/authd` 的新 `system.privilege.taskport.debug` 请求，不能仅用“没有看到弹窗”作为依据。
+
+- 同一已发布 MoltenVK 与 x86_64 Vulkan 呈现探针：capture=0、scope=0/3 时均无授权请求；capture=1、scope=0/3 时各出现一次请求。四组各90帧呈现、90次像素读回及一次交换链重建全部通过。仅关闭 MoltenVK 自动捕获范围不足以消除请求。
+- 同一 Wine/DXMT 三角形探针按 capture=0→1→0 运行，请求数为0→2→0；每轮180帧呈现、像素读回及设备状态检查通过。新 prefix 的基础命令执行通过。
+- 四组原生 Metal blit/读回通过。capture=1 创建 CaptureMTLDevice 并加载 GPUToolsCapture，capture=0 为原生设备；无窗口 blit 本身没有触发授权请求，不将它当作弹窗的复现证据。
+- 结论支持关闭随发行配置启用的 Metal GPU 捕获支持。没有采集 Apple 私有框架的具体调用栈，不据此断言 Wine 缺少某个函数实现。
+
+## 真实安装、升级和启动器
+
+- 使用候选安装器内的真实脚本与最终 Recovery payload，通过官方 Windows 1.6.0 EXE 完成独立目录的全新安装；安装及完整安装检查返回0，无开发者调试授权请求。没有在新装目录下载整份游戏或登录新账号。
+- 对现有游戏、启动器和 prefix 作独立 APFS clonefile 副本，先用已发布 v0.4.0 安装器配置，再用 v0.4.1 安装器原目录升级，均成功。游戏三项核心文件 SHA 相同，原环境5229条文件、目录与链接记录在测试检查点核对未变。
+- 升级保留采用的 State 环境与缓存，自动清理52项已识别旧内容。测试 prefix 中原有的 labtests/Endfield.exe 触发既有游戏保护，相关备份保留并报告清理提醒；不把这次结果写成“所有备份均删除”。
+- 通过升级后的正式 run.sh 启动官方启动器。故意继承 capture=1/scope=3，实际 Wine 环境仍为0/0。Games.exe 加载副本内的 DXMT 模块，未加载 GPUToolsCapture；观察期间无开发者调试授权请求。
+- 从新版实际新装目录再次运行 Vulkan 和 Wine/DXMT 探针，经正式 common.sh 加载环境，故意继承1/3后均覆盖为0/0。Vulkan 90帧与90次读回、DXMT 180帧及像素读回全部通过，授权请求均为0；DXMT 测试 prefix 正常关闭，无强制清理。
+- 本轮桌面工具无法识别 Wine 窗口，因此上述启动器进程、模块与授权日志检查不等同于已验证游戏世界画面或长期游玩。
+
+## 安装回归和包校验
+
+本轮65项合成集成检查全部通过，8份记录的源码 SHA 与当前源码一致。测试使用一次性假 Wine，进程清单显式隔离，覆盖新装、旧版升级、同版重装、路径搬动、运行中拒绝、锁、失败回滚、游戏保护、清理重试和故障处理；不把模拟磁盘格式分支当作真实外盘测试。
+
+新旧 Recovery 包逐项比较：仅 environment.sh、version.json、PROFILE-SHA256.txt、PACKAGE-NOTICE.txt 四个文件变化，runtime/bin/licenses 全部相同。四份对应源码附件保留原名且字节不变，包括 Wine v0.4.0 源码。最终安装器签名、ZIP、内嵌脚本与 payload 一致性校验通过。
+
+本次不包含间歇 Vulkan GPU Hang 的修复，也没有证明能减少卡顿或提高帧率。此前卡加载事件有 Metal GPU Hang 记录，使用者随后重启游戏、仍用 Vulkan 恢复正常；不是 DX11 对照结果。其他 Mac、实体外置盘跨卷/拔插、完整新账号下载及所有游戏场景未完成同等验证。
+
+本机证据：`evidence/devtools-fix-20261025/controlled-results.json`、`real-validation/`、`evidence/release-20261025/synthetic/`、`payload-equivalence.json`。原始日志、测试副本和账号环境不上传 Release。
+
+---
+
 # v0.4.0-preview 预发布验证（2026-10-24）
 
 测试设备为 Apple M1 Max / macOS 26.6.1。真实测试使用快照 `0.4.0-recovery-release-20261024`，发布时命名为 `0.4.0-preview-20261024`；运行库、链接及37项环境配置逐项核验一致，仅版本元数据变化。真实测试均在独立目录中完成，未替换日常游戏环境。

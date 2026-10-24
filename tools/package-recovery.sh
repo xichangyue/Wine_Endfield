@@ -4,7 +4,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FROZEN="${1:?提供固定版目录（含 runtime、environment.json 和 version.json）}"
 OUT="${2:?提供新的输出目录}"
-VERSION="${3:-v0.4.0-preview}"
+VERSION="${3:-v0.4.1-preview}"
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || { echo '版本号格式无效' >&2; exit 2; }
 FROZEN="$(cd "$FROZEN" && pwd)"
 mkdir -p "$OUT"
@@ -54,7 +54,7 @@ cp "$FROZEN/version.json" "$PAYLOAD/version.json"
 cp "$REPO/DirectX11/fonts.reg" "$PAYLOAD/fonts.reg"
 cp "$REPO/LICENSE" "$PAYLOAD/licenses/Installer-MIT.txt"
 cat > "$PAYLOAD/PACKAGE-NOTICE.txt" <<'EOF'
-Endfield Mac recovery runtime — v0.4.0-preview
+Endfield Mac recovery runtime — v0.4.1-preview
 
 This package contains the locally verified Wine compatibility runtime and the
 unmodified 7-Zip utility. It contains no game, official launcher, Wine prefix,
@@ -71,7 +71,11 @@ Corresponding source is provided with this release:
   dxmt-v0.80-source.tar.gz
   7z2603-src.tar.xz
 
-https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.4.0-preview
+https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.4.1-preview
+
+This release disables Metal capture support in the default environment. Runtime
+binaries are unchanged from v0.4.0-preview, so the corresponding source archives
+retain their existing names and contents.
 
 The Wine source archive contains the complete modified source, module-specific
 source variants, build instructions and provenance. The earlier v0.3 Wine
