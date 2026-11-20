@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "release": "v0.4.0-preview",
-  "scope": "Sanitized historical build evidence and portable GnuTLS rebuild; the public build script is a reproducible recipe, not a byte-identical rebuild claim.",
+  "release": "v0.4.2-preview",
+  "scope": "Sanitized historical build evidence, portable GnuTLS rebuild, the complete ACE runtime changes, the multi-processor IPI/IRQL contract, and the parameter-free Tace service-host containment used by v0.4.2-preview; the public build script is a reproducible recipe, not a general byte-identical rebuild claim.",
   "records": {
     "ntoskrnl": {
       "source_variant": "ntoskrnl",
@@ -38,6 +38,183 @@
           "seconds": 11.544553708000002
         }
       ]
+    },
+    "ntoskrnl_ace_candidate": {
+      "source_variant": "ntoskrnl",
+      "post_variant_patch": "compat/ace-core-three-imports.patch",
+      "post_variant_patch_sha256": "c53d424e19171dc870c03ddf1fe5e98d52c483375893083e4c5edac867743ccf",
+      "upstream_reference": {
+        "repository": "https://github.com/stoicswe/Endfield_FineWine",
+        "commit": "07f00bf5765f2a04fbcdc1eae20818bf93b74f5e",
+        "path": "patches/stage2-dwproton/ace-core/0001-ntoskrnl-Implement-ACE-CORE-new-imports.patch",
+        "sha256": "d127e3ec5078c6bb9921bdff1c36ea149de30e313195ec0599fa9b9ca72501d9"
+      },
+      "post_patch_manifest": "compat/ace-core-three-imports-SHA256.txt",
+      "post_patch_manifest_sha256": "a9bdbb80b1b6853df964a0ac732acab52527c9e188965d150b40bd9f20b6c763",
+      "changed_source_files": [
+        "dlls/ntoskrnl.exe/ntoskrnl.c",
+        "dlls/ntoskrnl.exe/ntoskrnl.exe.spec"
+      ],
+      "added_exports": [
+        "KeIpiGenericCall",
+        "KeRevertToUserGroupAffinityThread",
+        "KeSetSystemGroupAffinityThread"
+      ],
+      "reference_build": {
+        "compiler": "llvm-mingw clang 23.1.0, target x86_64-w64-windows-gnu",
+        "target": "dlls/ntoskrnl.exe/x86_64-windows/ntoskrnl.exe",
+        "result": "passed",
+        "artifact_sha256": "b5b34a0365a7c5c6790c4daf740656c4ac451c86aafa2bc0694fdc0701607cba",
+        "artifact_size": 1384448,
+        "byte_identical_public_rebuild_claim": false,
+        "difference_note": "PE debug information records the source path; a different output directory changes the binary hash."
+      },
+      "validation": {
+        "exports_added": 3,
+        "exports_removed": 0,
+        "pe_imports_added": 0,
+        "pe_imports_removed": 0,
+        "ace_core_drivers_resolve_all_seven_new_imports": true,
+        "isolated_self_owned_driver_ab": "passed"
+      },
+      "release_status": "isolated_candidate_not_in_v0.4.1_runtime"
+    },
+    "ace_runtime_candidate": {
+      "source_variant": "ntoskrnl",
+      "post_variant_patch": "compat/ace-core-runtime.patch",
+      "post_variant_patch_sha256": "19ca95a6e767cc0b9920433f632da5895baab012b018039c6c5f5a1a0436edad",
+      "post_patch_manifest": "compat/ace-core-runtime-SHA256.txt",
+      "post_patch_manifest_sha256": "59f41ace0c11e93283eb7259f8a30a4c77028bb67d825a015739a61048f913f4",
+      "upstream_references": [
+        {
+          "repository": "https://github.com/stoicswe/Endfield_FineWine",
+          "commits": [
+            "85f55ed80d2be2d02c883507a085abe79e466a6c",
+            "ce4b21c38fdbb72d54d78abc0fa2143f830fc4a2"
+          ]
+        },
+        {
+          "repository": "https://dawn.wine/dawn-winery/wine-dwproton",
+          "commit": "f8a077cecd9a679c297fc93190b03e1e6fba0e4a"
+        }
+      ],
+      "changed_source_files": [
+        "dlls/ntoskrnl.exe/ntoskrnl.c",
+        "dlls/ntoskrnl.exe/ntoskrnl.exe.spec",
+        "include/ddk/wdm.h",
+        "loader/wine.inf.in",
+        "programs/wineboot/wineboot.c"
+      ],
+      "added_exports": [
+        "KeIpiGenericCall",
+        "KeRevertToUserGroupAffinityThread",
+        "KeSetSystemGroupAffinityThread",
+        "MmCopyMemory"
+      ],
+      "service_change": "Register SamSs in wine.inf and start it through SCM after prefix update",
+      "reference_build": {
+        "result": "passed",
+        "ntoskrnl_sha256": "137e7a111b862cc9e899ff4255e4e8e1fef29994ddce26e2ea5a124606ad7d81",
+        "wineboot_sha256": "652087ba497444d0c028975fb837ac665f8c293cc6928adb5294c24b91cca5ae",
+        "wine_inf_sha256": "d1248be104eeb27fed9c1ed3849f46e28768fed24da6e9d7c72fce450a9cd409",
+        "byte_identical_public_rebuild_claim": false
+      },
+      "validation": {
+        "source_check": "passed",
+        "build_check": "passed",
+        "export_check": "passed",
+        "scm_import_check": "passed",
+        "fresh_prefix_samss_running": true,
+        "fresh_prefix_lsass_running": true
+      },
+      "release_status": "included_as_v0.4.2_preview_prerequisite"
+    },
+    "ace_ipi_contract_candidate": {
+      "source_variant": "ntoskrnl",
+      "prerequisite_patch": "compat/ace-core-runtime.patch",
+      "prerequisite_patch_sha256": "19ca95a6e767cc0b9920433f632da5895baab012b018039c6c5f5a1a0436edad",
+      "post_variant_patch": "compat/ace-ipi-contract.patch",
+      "post_variant_patch_sha256": "2c980623d8b18d4dac4ca6c38fe5db6f6e6987f1b9108de8c096c84f1fbda87e",
+      "post_patch_manifest": "compat/ace-ipi-contract-SHA256.txt",
+      "post_patch_manifest_sha256": "08762d7277e6ae5395ac180e3b70257f152d8e40d51b0e69d68bd1eef81d25dd",
+      "source_transition_manifest": "compat/ace-ipi-contract.manifest.json",
+      "source_transition_manifest_sha256": "371b13222efbb66c59b21f4433b6b232deaeec10241ff60d15d3a4b1f6a06e74",
+      "public_build_module": "ace-runtime-v2",
+      "changed_source_files": [
+        "dlls/ntoskrnl.exe/instr.c",
+        "dlls/ntoskrnl.exe/ntoskrnl.c",
+        "dlls/ntoskrnl.exe/ntoskrnl.exe.spec",
+        "dlls/ntoskrnl.exe/ntoskrnl_private.h",
+        "dlls/ntoskrnl.exe/sync.c"
+      ],
+      "contract_changes": [
+        "KeIpiGenericCall executes once on every active processor, including the source processor",
+        "Processor identity is stable and group-aware for every IPI and generic DPC callback",
+        "KeGetCurrentIrql and direct CR8 reads agree at IPI_LEVEL or DISPATCH_LEVEL",
+        "Generic DPC exceptions restore affinity, processor identity, TLS and IRQL before propagation",
+        "Spin-lock acquire/release and KfRaiseIrql preserve and restore the previous IRQL"
+      ],
+      "implemented_exports": [
+        "ExRaiseStatus"
+      ],
+      "reference_build": {
+        "result": "passed",
+        "ntoskrnl_sha256": "97a0c7e2f73dfac6a582c5f03a4a32abe78a051002e339b1b12c67741b73a8df",
+        "wineboot_sha256": "652087ba497444d0c028975fb837ac665f8c293cc6928adb5294c24b91cca5ae",
+        "wine_inf_sha256": "d1248be104eeb27fed9c1ed3849f46e28768fed24da6e9d7c72fce450a9cd409",
+        "byte_identical_public_rebuild_claim": false
+      },
+      "validation": {
+        "source_check": "passed",
+        "build_check": "passed",
+        "ipi_processor_identity_irql_check": "passed",
+        "generic_dpc_irql_exception_reuse_check": "passed",
+        "spin_lock_irql_check": "passed"
+      },
+      "release_status": "included_as_v0.4.2_preview_prerequisite"
+    },
+    "ace_tace_service_host_candidate": {
+      "source_variant": "ntoskrnl",
+      "prerequisite_patches": [
+        {
+          "path": "compat/ace-core-runtime.patch",
+          "sha256": "19ca95a6e767cc0b9920433f632da5895baab012b018039c6c5f5a1a0436edad"
+        },
+        {
+          "path": "compat/ace-ipi-contract.patch",
+          "sha256": "2c980623d8b18d4dac4ca6c38fe5db6f6e6987f1b9108de8c096c84f1fbda87e"
+        }
+      ],
+      "post_variant_patch": "compat/ace-tace-service-host.patch",
+      "post_variant_patch_sha256": "4c0ba86568ba2bfeb3ae39accbfcf165979c35b74a9a7841dfb1a12e98f2919d",
+      "post_patch_manifest": "compat/ace-tace-service-host-SHA256.txt",
+      "post_patch_manifest_sha256": "41d15d258aa8d74cb820d1fc42329f098c73ccab3eaf8a975928190c6af728c5",
+      "source_transition_manifest": "compat/ace-tace-service-host.manifest.json",
+      "source_transition_manifest_sha256": "8b15db69ed3a1611afbb8a7bd3cd4ab389fcf84a31846d4cca74136ae6ea3fe8",
+      "public_build_module": "ace-runtime-v3",
+      "changed_source_files": [
+        "dlls/ntoskrnl.exe/ntoskrnl.c"
+      ],
+      "source_after_sha256": "2c773c74c71bd784a5de254fedf5fbf72bd9df3cdb1910d8cff44dca7cdd7e99",
+      "contract_changes": [
+        "Contain only parameter-free vendor bugcheck code 0x65636154 to the calling ACE system thread",
+        "Keep every other bugcheck code and parameter combination on the existing process-termination path",
+        "Keep the Wine driver-service host and SCM service state alive after the ACE watchdog fires"
+      ],
+      "reference_build": {
+        "result": "passed",
+        "ntoskrnl_sha256": "c31782815f1d5ab37c7da936ec2295af9cd3c3b38d9cd9e09d0da6cd42580726",
+        "wineboot_sha256": "652087ba497444d0c028975fb837ac665f8c293cc6928adb5294c24b91cca5ae",
+        "wine_inf_sha256": "d1248be104eeb27fed9c1ed3849f46e28768fed24da6e9d7c72fce450a9cd409",
+        "byte_identical_public_rebuild_claim": false
+      },
+      "validation": {
+        "source_check": "passed",
+        "build_check": "passed",
+        "scope_probe": "passed",
+        "live_game_service_host_check": "passed"
+      },
+      "release_status": "included_in_v0.4.2_preview"
     },
     "ntdll": {
       "source_variant": "ntdll",
@@ -223,7 +400,105 @@
         "ac_cv_lib_soname_freetype": "${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib/libfreetype.6.dylib",
         "ac_cv_lib_soname_vulkan": "${PROJECT_ROOT}/evidence/ace-directions-20261015/upstream/wine11.19-build/dependencies/runtime-lib/libvulkan.1.4.350.dylib"
       },
-      "note": "Historical absolute dependency directories are evidence only. The public recipe replaces the GnuTLS/FreeType/Vulkan SONAME cache values with runtime-relative paths; only secur32.so was rebuilt for this release."
+      "distributed_modules": [
+        "lsass.exe",
+        "secur32.dll",
+        "msv1_0.dll",
+        "sechost.dll",
+        "secur32.so",
+        "msv1_0.so"
+      ],
+      "note": "Historical absolute dependency directories are evidence only. The public recipe replaces the GnuTLS/FreeType/Vulkan SONAME cache values with runtime-relative paths. The distributed PE authentication modules and pristine sechost use equal-byte-length source-path mapping and have debug-only records removed; secur32.so retains the runtime-relative GnuTLS rebuild."
+    },
+    "release_path_sanitization": {
+      "scope": "Remove private local build paths without changing executable behavior, and remove the investigation-only scmboundary sechost variant from the distributed runtime.",
+      "compiler": "llvm-mingw clang 23.1.0, target x86_64-w64-windows-gnu",
+      "tools": {
+        "pe": "x86_64-w64-mingw32-strip --strip-debug",
+        "macho": "/usr/bin/strip -S followed by ad-hoc codesign",
+        "app": "ad-hoc codesign followed by deep strict verification"
+      },
+      "equal_byte_length_path_map": {
+        "source_bytes": 126,
+        "mapped_bytes": 126,
+        "mapped_prefix": "/usr/src/wine/compat/authentication/vendor/wine-11.16/endfield-runtime/reproducible-build/source-tree/path-prefix-padding-0000",
+        "flags": [
+          "-ffile-prefix-map=OLD=NEW",
+          "-fdebug-prefix-map=OLD=NEW",
+          "-fmacro-prefix-map=OLD=NEW"
+        ]
+      },
+      "runtime_modules": [
+        {
+          "path": "bin/wineserver",
+          "before_sha256": "127a1268422f284401456cb5b78b2550d5ef85417ceb8f52a94e59b8a8be8ae7",
+          "after_sha256": "09b443e17cc9e50a9e459c178162242e574ffc058b695b49da954d6f3fe2ac5d",
+          "operation": "strip Mach-O STABS and re-sign"
+        },
+        {
+          "path": "lib/wine/x86_64-unix/ntdll.so",
+          "before_sha256": "81d7819378bb2bcfdc625f63876dd2a776b06f46cfe88fd933f25f477e618133",
+          "after_sha256": "ce1dd114567eedc132477a022d7553c8b918132ff953fe423cf82b9c72107df0",
+          "operation": "strip Mach-O STABS and re-sign"
+        },
+        {
+          "path": "lib/wine/x86_64-unix/winemac.so",
+          "before_sha256": "36b94982c097dda0b9de72a84fd5575eccb6913827e5e397144ece84df7d769d",
+          "after_sha256": "92915d3a570609de7c466f8f7eab72a8a9e2c23980377053efdbab631db7b63e",
+          "operation": "strip Mach-O STABS and re-sign"
+        },
+        {
+          "path": "lib/wine/x86_64-windows/kernel32.dll",
+          "before_sha256": "b35192e7fcac3c4e294f75fd83497d0df8489a4c39b9d2a60cc02606857be5ac",
+          "after_sha256": "a1a37761b1ca5c302c058d5243846de1eb4a9f774d47fea3d87a7219d8ab0421",
+          "operation": "strip PE DWARF"
+        },
+        {
+          "path": "lib/wine/x86_64-windows/lsass.exe",
+          "before_sha256": "6eebc524741e4b513f3b4ea0c17964b2137ba6093eff363f6891e78b30ece125",
+          "after_sha256": "29d875bb34da7d101f90b33856f46014ebd70196b379e84861135c3e28e3aa3a",
+          "operation": "strip PE DWARF"
+        },
+        {
+          "path": "lib/wine/x86_64-windows/msv1_0.dll",
+          "before_sha256": "a9e4503dfba412b775543fc7924d2b0b5ea31207a57b52f28bd025bb97a7f1ed",
+          "after_sha256": "f21af6eb6843c56fdbe3ebf9a78c4e3133b76d2d75a0dcf26d7624d77852efcd",
+          "operation": "equal-byte-length path-map rebuild and strip PE DWARF"
+        },
+        {
+          "path": "lib/wine/x86_64-windows/ntoskrnl.exe",
+          "before_sha256": "c31782815f1d5ab37c7da936ec2295af9cd3c3b38d9cd9e09d0da6cd42580726",
+          "after_sha256": "aba45fe9de6cc9311baac5c14b3449a0c0765aea84f1b4e57646f2cf525e90ba",
+          "operation": "strip PE DWARF"
+        },
+        {
+          "path": "lib/wine/x86_64-windows/sechost.dll",
+          "before_sha256": "fdc336d779b4633acb164cf4ad22df8b41fa5611aefc5cc96215367251ade6ef",
+          "after_sha256": "dc7887dae70a2f530b383b37ea901bd96a897fa52b90bbcf6d33a96e82a821d5",
+          "operation": "rebuild pristine auth-source Wine 11.16 module with equal-byte-length path mapping and strip PE DWARF"
+        },
+        {
+          "path": "lib/wine/x86_64-windows/secur32.dll",
+          "before_sha256": "72ecf96595fd0e584752828f9e04165e95d9d84166984e18e69674a681ffff60",
+          "after_sha256": "8d4de6b5bc01263f2a65ceacb6fd544f3b1335c36cbee189d598f2b20b4f3e5f",
+          "operation": "equal-byte-length path-map rebuild and strip PE DWARF"
+        },
+        {
+          "path": "lib/wine/x86_64-windows/wineboot.exe",
+          "before_sha256": "652087ba497444d0c028975fb837ac665f8c293cc6928adb5294c24b91cca5ae",
+          "after_sha256": "19b488b884fe863517259b2896d9f372eb6811f7c44922892e3d4e9aa57ce1c5",
+          "operation": "strip PE DWARF"
+        }
+      ],
+      "binary_invariants": {
+        "pe_strip_only_imports_exports_text_rdata_unchanged": true,
+        "macho_dependencies_exports_text_unchanged": true,
+        "equal_length_rebuild_text_data_pdata_eh_frame_reloc_unchanged": true,
+        "equal_length_rebuild_only_rdata_diagnostic_paths_changed": true,
+        "sechost_source_matches_pristine_wine_11_16": true,
+        "scmboundary_investigation_channel_removed": true
+      },
+      "validation": "passed"
     },
     "portable_secur32": {
       "source_variant": "auth",

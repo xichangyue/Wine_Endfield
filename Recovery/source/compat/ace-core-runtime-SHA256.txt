@@ -1,0 +1,5 @@
+a16794c5fdaaa7b82fbd6d7808cd78ed0671de7a5586f2f1d7fc5cbf5c8b670a  dlls/ntoskrnl.exe/ntoskrnl.c
+0f1a525124833a82808418910cbdf5f9b7f2553db664d13db82639a24f5a0e6b  dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+b9521282612f4cdf62ff384545906bf816e7ffb81aac5584e0de0ed0e658763f  include/ddk/wdm.h
+3de1d76e071fb0a6d42e9c7b742a4d023a141125e7c313765900019218aa53ab  loader/wine.inf.in
+701e2e5f7c4d3783857677657c0eb7c1204922173972a81991bd362f74057df2  programs/wineboot/wineboot.c

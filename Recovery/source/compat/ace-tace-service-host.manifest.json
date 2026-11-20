@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "name": "ACE Tace driver-service-host containment",
+  "patch": "ace-tace-service-host.patch",
+  "patch_sha256": "4c0ba86568ba2bfeb3ae39accbfcf165979c35b74a9a7841dfb1a12e98f2919d",
+  "base": "post ace-ipi-contract.patch",
+  "public_build_module": "ace-runtime-v3",
+  "files": [
+    {
+      "path": "dlls/ntoskrnl.exe/ntoskrnl.c",
+      "before_sha256": "1e811305063d44de0e08de93df007c5c12b1deb11f8d965e4d7240c9dc93ac55",
+      "after_sha256": "2c773c74c71bd784a5de254fedf5fbf72bd9df3cdb1910d8cff44dca7cdd7e99"
+    }
+  ],
+  "reference_artifact": {
+    "path": "lib/wine/x86_64-windows/ntoskrnl.exe",
+    "sha256": "c31782815f1d5ab37c7da936ec2295af9cd3c3b38d9cd9e09d0da6cd42580726"
+  },
+  "validation": "passed"
+}

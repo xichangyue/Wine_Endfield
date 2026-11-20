@@ -72,7 +72,7 @@ verify_installation() {
   (cd "$RECOVERY" && /usr/bin/shasum -a 256 -c PROFILE-SHA256.txt) >/dev/null || fail '运行配置已变化，请重新安装修复。'
   (cd "$WINE_ROOT" && /usr/bin/shasum -a 256 -c "$RECOVERY/CORE-SHA256.txt") >/dev/null || fail '核心运行库校验失败，请重新安装修复。'
   local name
-  for name in ntoskrnl.exe d3d11.dll dxgi.dll winemetal.dll; do
+  for name in ntoskrnl.exe wineboot.exe kernel32.dll lsass.exe sechost.dll secur32.dll msv1_0.dll d3d11.dll dxgi.dll winemetal.dll; do
     /usr/bin/cmp -s "$WINE_ROOT/lib/wine/x86_64-windows/$name" "$PREFIX/drive_c/windows/system32/$name" || fail "环境组件不配套：${name}。请在原目录运行安装器修复。"
   done
   [ "$(readlink "$PREFIX/drive_c/Endfield")" = '../../../Game' ] && [ -d "$PREFIX/drive_c/Endfield" ] || fail '游戏映射已变化，请在原目录运行安装器修复。'

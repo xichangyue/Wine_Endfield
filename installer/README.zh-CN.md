@@ -1,6 +1,6 @@
-# 终末地 Mac 安装器 0.4.1（预发布）
+# 终末地 Mac 安装器 0.4.2-preview
 
-本安装器包含 `0.4.1-preview-20261025` 配置快照，默认关闭 Metal GPU 捕获支持，修正其触发的 DevTools 开发者授权请求，不修改系统开发者安全策略。运行库二进制沿用 v0.4.0；旧版升级、自选安装目录、成功后的自动清理及渲染选择保持不变。本次不包含 Vulkan GPU Hang 修复或性能优化。需要 Apple Silicon、macOS 26 或更新版本及 Rosetta 2；使用者无需安装编译器或 Python。此版未经过 Apple 公证。
+本安装器包含由 `0.4.2-private.3-20261112` 持续验证后提升的 `0.4.2-preview-20261120` 固定运行库，核心运行库字节不变。ACE 侧补齐驱动所需内核接口，并通过 Wine 服务管理器注册和启动 `SamSs`/`lsass.exe`；对于 ACE-CORE 后台线程触发的无参数 `Tace`，Wine 保留驱动服务宿主并只结束触发 watchdog 的系统线程，其他 bugcheck 仍使用原处理。Vulkan 侧采用 FineWine 的终末地补丁及后续描述符、纹理生命周期、命令缓冲保留和呈现等待修复。需要 Apple Silicon、macOS 26 或更新版本及 Rosetta 2；使用者无需安装编译器或 Python。此版为 ad-hoc 签名，未经过 Apple 公证。
 
 ## 新安装
 
@@ -13,14 +13,14 @@
 
 ## 从旧版本更新
 
-支持由 v0.2.0、v0.3.0、v0.4.0 统一安装器创建、带 `.endfield-installer-v1` 标记的安装，以及此后新版安装。选择原安装文件夹即可；已有官方启动器时不需要重新提供 EXE。v0.4.0 用户也需在原目录运行本安装器，让新配置替换旧版开启捕获的配置；不必手工删除环境或缓存。
+支持由 v0.2.0 及以后统一安装器创建、带 `.endfield-installer-v1` 标记的安装。选择原安装文件夹即可；已有官方启动器时不需要重新提供 EXE。升级时不必手工删除环境或整份缓存；安装器只在运行库版本变化时删除终末地已知的两个 `vulkan_pso_cache.bin`，普通设置和其他缓存保留。
 
 升级前正常退出游戏、官方启动器和其他 Wine 程序。安装器先解压、校验并配置新环境，成功后切换；失败时保留或恢复旧环境。
 
 - `Game/` 和已有 `Launcher/` 保留，游戏无需重新下载；启动器的共享游戏链接会转为相对路径。
-- 从已有 `State/` 复制用户环境和缓存，v0.4.0 用户沿用此环境；第一次从更早旧版升级优先复制 `Updater/local/`，缺失时依次使用 `DirectX11/local/`、`Vulkan/local/`。不会合并不同旧环境里的图形设置。成功后会删除未采用的旧版设置和缓存，只保留新版正在使用的环境及其缓存。
+- 从已有 `State/` 复制用户环境和缓存；第一次从更早旧版升级优先复制 `Updater/local/`，缺失时依次使用 `DirectX11/local/`、`Vulkan/local/`。不会合并不同旧环境里的图形设置。版本变化时会在事务副本中清除终末地 Vulkan PSO 缓存，让新管线缓存标识重新生成；失败时原环境不受影响。
 - 已有登录数据随环境复制保留，但是否需要重新登录仍由官方启动器决定。
-- 原三个模式入口会兼容转到官方启动器。新安装只创建一个“终末地”入口。
+- 原三个模式入口会兼容转到官方启动器。新安装创建一个“终末地”游戏入口，并创建一个只读的“终末地兼容诊断”入口。
 - 安装失败时保留或恢复原环境。新版本配置、切换和校验全部成功后，自动清理已识别的旧运行库、旧用户环境和历次 `.runtime-backups/` 中的旧组件，不保留完整旧版用于一键回退。
 - 清理属于安装/更新收尾的一部分，无需额外按钮。`Game/`、`Launcher/` 和当前 `State/Recovery/Apps` 不在清理范围；旧目录中若发现实体游戏或删除失败，则保留相应部分，并在成功提示及日志中说明。未采用的旧 Wine 环境及其缓存会整体删除，包括其中自行存放的非游戏文件；已识别清理目录之外的自有文件和未知遗留事务目录保留。
 - 旧版固定名称的安装/校验日志及按模式生成的运行日志会一并清理；新版诊断、当前会话日志和根目录中的自定义日志保留。已更新的旧快捷方式仍可使用，不因清理而失效。详情见 `logs/installer-cleanup.log`；若该日志无法写入，主安装日志仍会记录清理失败提醒。
@@ -39,6 +39,10 @@ Wine 需要符号链接及可执行文件语义，本安装器只接受 APFS 或
 
 ## 验证与日志
 
+安装后可打开 `Apps/终末地兼容诊断.app` 生成只读支持包。ZIP 会保存在安装目录的 `logs/` 并由 Finder 选中，适合排查 ACE 驱动拦截和不同 Mac 之间的环境差异。支持包包含系统与芯片摘要、安装/迁移版本、固定运行库、启动器、游戏主程序及 ACE 文件哈希、ACE 服务关键字段，以及最近保留的五次运行日志中的 ACE/ntoskrnl/服务相关行和已有退出结果；不会启动 Wine 或查询动态服务状态，也不打包账号或令牌文件、完整 prefix、游戏资源内容或完整运行日志，仅读取上述固定文件以计算哈希。筛选日志里的常见令牌、授权、Cookie 与密码字段会被遮盖，用户主目录、用户名和安装路径会被替换为占位符。
+
+若要在更新前保留故障现场，可将 `installer/diagnose.sh` 与 `tools/终末地ACE诊断.command` 放在同一目录，双击后选择现有安装目录；该入口只生成同样的支持包，不安装或清理环境。
+
 ```bash
 bash installer/test-installation.sh /完整安装目录
 ```
@@ -54,8 +58,8 @@ bash installer/test-installation.sh /完整安装目录
 ## 构建
 
 ```bash
-bash tools/package-recovery.sh /固定版本目录 /新的payload输出目录 v0.4.1-preview
-bash tools/build-installer.sh /payload输出目录 /新的安装器输出目录 v0.4.1-preview
+bash tools/package-recovery.sh /固定版本目录 /新的payload输出目录 v0.4.2-preview
+bash tools/build-installer.sh /payload输出目录 /新的安装器输出目录 v0.4.2-preview
 ```
 
-构建需要 Xcode Command Line Tools。安装器不携带官方 EXE、游戏、prefix、账号或个人缓存。源码和许可边界见 `THIRD_PARTY.md` 及 payload 的 `PACKAGE-NOTICE.txt`；对应的修改后 Wine、MoltenVK 源码及其他组件来源随 Release 提供。运行库二进制未变，源码附件继续使用原名称与内容，包括 `Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz`；复用运行库无需在用户机器上编译。
+构建需要 Xcode Command Line Tools。安装器不携带官方 EXE、游戏、prefix、账号或个人缓存。源码和许可范围见 `THIRD_PARTY.md` 及 payload 的 `PACKAGE-NOTICE.txt`；对应的修改后 Wine、MoltenVK 源码和其他组件来源与私测包一并保留，用户机器无需编译。

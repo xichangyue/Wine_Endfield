@@ -1,0 +1,22 @@
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -5120,4 +5120,18 @@ void WINAPI KeBugCheckEx(ULONG code, ULONG_PTR param1, ULONG_PTR param2, ULONG_PT
+ {
++    /* ACE-CORE raises its private "Tace" code from a watchdog system thread
++     * after DriverEntry has completed.  On Windows a bugcheck stops the whole
++     * machine; mapping that to ExitProcess() instead kills only Wine's
++     * per-driver winedevice host, leaves the rest of the Wine machine alive,
++     * and makes SCM report a spurious service crash.  Keep the established
++     * no-return contract while containing this one parameter-free vendor
++     * watchdog to the thread which raised it. */
++    if (code == 0x65636154 && !param1 && !param2 && !param3 && !param4 &&
++            GetCurrentThreadId() != request_thread)
++    {
++        WARN( "contained ACE-CORE watchdog in the calling system thread\n" );
++        ExitThread( STATUS_TIMEOUT );
++    }
++
+     ERR( "%lx %Ix %Ix %Ix %Ix\n", code, param1, param2, param3, param4 );
+     ExitProcess( code );
+ }

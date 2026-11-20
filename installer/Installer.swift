@@ -3,7 +3,7 @@ import Darwin
 
 private let manager = FileManager.default
 private let markerName = ".endfield-installer-v1"
-private let acceptedLaunchModes = ["Launcher", "Vulkan", "DirectX11", "Update"]
+private let acceptedLaunchModes = ["Launcher", "Vulkan", "DirectX11", "Update", "Diagnose"]
 
 func installFailureSummary(log: URL, exitCode: Int32) -> String {
     let data: Data
@@ -461,17 +461,43 @@ if let mode = Bundle.main.object(forInfoDictionaryKey: "LaunchMode") as? String 
         guard acceptedLaunchModes.contains(mode) else { throw failure("此快捷方式的启动模式无效，请使用安装器更新入口。") }
         let root = try installRoot()
         if CommandLine.arguments.contains("--check") {
-            print("Launcher: \(root.path)")
+            print("\(mode): \(root.path)")
             exit(0)
         }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.finishLaunching()
-        let log = root.appendingPathComponent("logs/shortcut.log")
-        guard manager.createFile(atPath: log.path, contents: nil) else { throw failure("无法写入运行日志，请检查安装目录权限。") }
-        let h = try FileHandle(forWritingTo: log)
+        let logs = root.appendingPathComponent("logs", isDirectory: true)
+        var logsInfo = stat()
+        if lstat(logs.path, &logsInfo) == 0 {
+            guard (logsInfo.st_mode & S_IFMT) == S_IFDIR else {
+                throw failure("日志目录不是普通目录或是符号链接，请检查安装目录。")
+            }
+        } else if errno == ENOENT {
+            try manager.createDirectory(at: logs, withIntermediateDirectories: true)
+        } else {
+            throw failure("无法检查运行日志目录，请检查安装目录权限。")
+        }
+        let logsFD = open(logs.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard logsFD >= 0 else { throw failure("运行日志目录不能是符号链接，请检查安装目录。") }
+        defer { close(logsFD) }
+        let logName = mode == "Diagnose" ? "diagnostic-shortcut-\(getpid()).log" : "shortcut.log"
+        let log = logs.appendingPathComponent(logName)
+        let logAccess = mode == "Diagnose" ? O_RDWR : O_WRONLY
+        let logFD = log.lastPathComponent.withCString {
+            openat(logsFD, $0, logAccess | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC,
+                   S_IRUSR | S_IWUSR)
+        }
+        guard logFD >= 0 else { throw failure("无法安全写入运行日志；日志文件不能是符号链接。") }
+        var logInfo = stat()
+        guard fstat(logFD, &logInfo) == 0, (logInfo.st_mode & S_IFMT) == S_IFREG else {
+            close(logFD)
+            throw failure("运行日志不是普通文件，请检查安装目录。")
+        }
+        let h = FileHandle(fileDescriptor: logFD, closeOnDealloc: true)
         defer { try? h.close() }
-        let p = process(root.appendingPathComponent("run.sh").path, ["Launcher"])
+        let script = root.appendingPathComponent(mode == "Diagnose" ? "diagnose.sh" : "run.sh").path
+        let p = process(script, mode == "Diagnose" ? [] : ["Launcher"])
         p.standardOutput = h
         p.standardError = h
         try p.run()
@@ -481,7 +507,33 @@ if let mode = Bundle.main.object(forInfoDictionaryKey: "LaunchMode") as? String 
             }
             app.updateWindows()
         }
-        if p.terminationStatus != 0 {
+        if mode == "Diagnose", p.terminationStatus == 0 {
+            let output: String
+            do {
+                try h.synchronize()
+                try h.seek(toOffset: 0)
+                output = String(decoding: try h.readToEnd() ?? Data(), as: UTF8.self)
+            } catch {
+                output = ""
+            }
+            let prefix = "DIAGNOSTIC_ZIP="
+            let generatedPath = output.components(separatedBy: .newlines)
+                .last { $0.hasPrefix(prefix) }
+                .map { String($0.dropFirst(prefix.count)) }
+            let generated = generatedPath.map { URL(fileURLWithPath: $0) }
+            let values = try? generated?.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            if let generated,
+               generated.deletingLastPathComponent().standardizedFileURL == logs.standardizedFileURL,
+               generated.pathExtension == "zip", generated.lastPathComponent.hasPrefix("support-"),
+               values?.isRegularFile == true, values?.isSymbolicLink != true {
+                NSWorkspace.shared.activateFileViewerSelecting([generated])
+                alert("诊断包已生成", "请将 Finder 中选中的 ZIP 提供给维护者。脚本不读取账号或令牌文件；筛选日志中的常见凭据字段会被遮盖。\n\n\(generated.path)")
+            } else {
+                alert("诊断包已生成", "脚本已成功结束，但其输出路径未通过校验。请查看安装目录的 logs 文件夹。")
+            }
+        } else if mode == "Diagnose" {
+            alert("诊断包生成失败", "详细原因见日志：\n\(log.path)")
+        } else if p.terminationStatus != 0 {
             alert("未能正常启动", "请先正常退出其他 Wine 游戏与启动器，再重试。详细原因见日志：\n\(log.path)")
         }
     } catch {

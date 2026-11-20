@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "release": "v0.4.0-preview",
-  "verification_date": "2026-10-23",
+  "release": "v0.4.2-preview",
+  "verification_date": "2026-11-12",
   "runtime_root": "Recovery/runtime/Wine Devel.app/Contents/Resources/wine",
   "dxmt": {
     "version": "v0.80",
@@ -70,19 +70,21 @@
     "bit_identical_rebuild_claim": false
   },
   "moltenvk": {
-    "version": "1.4.2-Endfield",
+    "version": "1.4.2-Endfield-v0.4.2-private.1",
+    "reused_from_release": "v0.4.2-private.1",
     "runtime_path": "lib/libMoltenVK.dylib",
-    "sha256": "1cf987832fc970cd1ed842fadc3a68796c39d4c173209e6a1eee9b04ca8e554d",
-    "identical_to_v0_3_runtime_archive": true,
-    "previous_runtime_archive": "Wine_Endfield-Vulkan-v0.3.0-preview.tar.xz",
+    "sha256": "b8a7cdde32010a3cfb93f4e20db8a020d0ef706e2a21241760b2bc98d4ef7561",
+    "bytes": 5663840,
+    "architecture": "x86_64",
+    "execution_path": "x86_64 Wine under Rosetta 2",
     "source_archive": {
-      "name": "MoltenVK-1.4.2-Endfield-v0.3.0-source.tar.xz",
-      "bytes": 8825756,
-      "sha256": "b24254c87e0219cf32ce1282a3190aadce2f923c555ed49517e69df235a4aa84",
-      "unchanged_from_v0_3": true,
+      "name": "MoltenVK-1.4.2-Endfield-v0.4.2-private.1-source.tar.xz",
+      "bytes": 7813028,
+      "sha256": "cfe6d1b10edb62f683a2729c5079ceaf97d99249803b115965924c1f264ad386",
+      "unchanged_from_v0_3": false,
       "includes_fixed_dependencies": true,
-      "source_files": 7358,
-      "regular_file_hashes_verified": 7358
+      "source_files": 7363,
+      "regular_file_hashes_verified": 7362
     },
     "components": [
       {
@@ -135,12 +137,23 @@
       }
     ],
     "patches": {
-      "moltenvk-1.4.2-endfield.patch": "e4f363ce09e10f342f316148cd694b6685d92c7b68a4b0df860f7e032e4a1bf2",
-      "spirv-cross-device-barrier.patch": "01c9a7617b642d03c6c371e13b700de61a2bb7443950a6dc620786ec9e61d48e"
+      "patches/moltenvk-endfield-v0.4.2-private.1.patch": "dc3497594982a34e2f6540672c56d181e89eb6fbd2bf747f21864a54a2a58b99",
+      "patches/spirv-cross-endfield-v0.4.2-private.1.patch": "92ba20c1e1e929e2ff75dc2d9b0f0fbb3548c1ca79efa1a0cae2669d84ad1de6"
     },
-    "source_details": "Vulkan/source/SOURCE-PROVENANCE.json",
+    "upstream_references": {
+      "finewine_commit": "625b462b1052613833ce097d9792e541118ad3d5",
+      "moltenvk_pr_commits": {
+        "2861": "cbe497918d1d24772de4753eaa199be74fa62d07",
+        "2889": "98ec6d42b22288c847510a453647ff6c35061c66",
+        "2887": "f2fa686edc71c93c44ca1d91b38354d9ddc5a919",
+        "2873": "2cf40c5222eca8e41cb07e1c6846e5b1a269edcb",
+        "2860": "53eafc69159adafb7507336171e742338a718085"
+      }
+    },
+    "source_details": "MoltenVK source archive SOURCE-PROVENANCE.json",
     "build_recipe": "tools/build-moltenvk.sh",
     "recompiled_for_this_release": false,
+    "validation": "Build, code signature, dependency audit, game-SPIR-V render, resource reuse, descriptor/depth reuse and timeline semaphore probes passed",
     "bit_identical_rebuild_claim": false
   },
   "wine_bridge_note": "winemac.so is a modified Wine module and is covered by the separate Wine recovery source manifest, not by the upstream DXMT source archive.",

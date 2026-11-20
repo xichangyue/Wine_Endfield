@@ -1,0 +1,832 @@
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -32,6 +32,7 @@
+ #include "ddk/csq.h"
+ #include "wine/server.h"
+ #include "wine/svcctl.h"
++#include "wine/exception.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(ntoskrnl);
+ WINE_DECLARE_DEBUG_CHANNEL(relay);
+@@ -64,7 +65,55 @@
+ static TP_CALLBACK_ENVIRON dpc_call_tpe;
+ DECLARE_CRITICAL_SECTION(dpc_call_cs);
+ static DWORD dpc_call_tls_index;
++static HINSTANCE ntoskrnl_instance;
+ 
++static TP_POOL *ipi_call_tp;
++static TP_CALLBACK_ENVIRON ipi_call_tpe;
++DECLARE_CRITICAL_SECTION(ipi_call_cs);
++static DWORD irql_tls_index;
++static DWORD processor_number_tls_index;
++
++#ifdef __x86_64__
++#define WINE_IPI_LEVEL 14
++#else
++#define WINE_IPI_LEVEL 29
++#endif
++
++KIRQL ntoskrnl_get_current_irql(void)
++{
++    ULONG_PTR value = (ULONG_PTR)TlsGetValue(irql_tls_index);
++
++    return value ? value - 1 : 0;
++}
++
++KIRQL ntoskrnl_set_current_irql(KIRQL irql)
++{
++    KIRQL old = ntoskrnl_get_current_irql();
++
++    TlsSetValue(irql_tls_index, irql ? (void *)(ULONG_PTR)(irql + 1) : NULL);
++    return old;
++}
++
++static ULONG get_emulated_processor_index(void)
++{
++    ULONG_PTR value = (ULONG_PTR)TlsGetValue(processor_number_tls_index);
++
++    return value ? value - 1 : ~0u;
++}
++
++static void *set_emulated_processor_index(ULONG index)
++{
++    void *old = TlsGetValue(processor_number_tls_index);
++
++    TlsSetValue(processor_number_tls_index, (void *)(ULONG_PTR)(index + 1));
++    return old;
++}
++
++static void restore_emulated_processor_index(void *value)
++{
++    TlsSetValue(processor_number_tls_index, value);
++}
++
+ /* tid of the thread running client request */
+ static DWORD request_thread;
+ 
+@@ -3654,6 +3703,25 @@
+             processor_index_table[index].Number == processor) return index;
+ 
+     return ~0u; /* INVALID_PROCESSOR_INDEX */
++}
++
++static ULONG get_current_processor_index(void)
++{
++    PROCESSOR_NUMBER number;
++    ULONG index, current;
++
++    index = get_emulated_processor_index();
++    if (index < processor_index_count) return index;
++
++    current = NtGetCurrentProcessorNumber();
++    number.Group = 0;
++    number.Number = current;
++    number.Reserved = 0;
++    index = KeGetProcessorIndexFromNumber(&number);
++    if (index < processor_index_count) return index;
++
++    WARN("Host processor %lu is absent from the active processor table.\n", current);
++    return processor_index_count ? 0 : ~0u;
+ }
+ 
+ ULONG WINAPI KeQueryActiveProcessorCount(PKAFFINITY active_processors)
+@@ -3741,13 +3809,230 @@
+  *           KeIpiGenericCall   (NTOSKRNL.EXE.@)
+  */
+ typedef ULONG_PTR (WINAPI *KIPI_BROADCAST_WORKER)(ULONG_PTR);
++
++struct ipi_call_state
++{
++    KIPI_BROADCAST_WORKER function;
++    ULONG_PTR argument;
++    volatile LONG arrived;
++    volatile LONG start;
++    volatile LONG abort;
++    volatile LONG done;
++    volatile LONG affinity_failures;
++    volatile LONG exception_code;
++};
++
++struct ipi_call_context
++{
++    struct ipi_call_state *state;
++    ULONG processor_index;
++};
++
++static struct ipi_call_context *ipi_call_contexts;
++static ULONG ipi_call_context_count;
++
++static BOOL set_processor_affinity(ULONG index, GROUP_AFFINITY *old)
++{
++    const PROCESSOR_NUMBER *number = &processor_index_table[index];
++    GROUP_AFFINITY affinity;
++    NTSTATUS status;
++
++    if ((status = NtQueryInformationThread(GetCurrentThread(), ThreadGroupInformation,
++            old, sizeof(*old), NULL)))
++    {
++        WARN("Failed to query thread affinity, status %#lx.\n", status);
++        return FALSE;
++    }
++
++    memset(&affinity, 0, sizeof(affinity));
++    affinity.Group = number->Group;
++    affinity.Mask = (KAFFINITY)1 << number->Number;
++    if ((status = NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++            &affinity, sizeof(affinity))))
++    {
++        WARN("Failed to select processor %u:%u, status %#lx.\n",
++                number->Group, number->Number, status);
++        return FALSE;
++    }
++    return TRUE;
++}
++
++static void WINAPI ipi_call_callback(TP_CALLBACK_INSTANCE *instance, void *context)
++{
++    struct ipi_call_context *call = context;
++    struct ipi_call_state *state = call->state;
++    GROUP_AFFINITY old_affinity;
++    BOOL affinity_set;
++    void *old_processor;
++    KIRQL old_irql;
++
++    TRACE("instance %p, processor_index %lu.\n", instance, call->processor_index);
++
++    affinity_set = set_processor_affinity(call->processor_index, &old_affinity);
++    if (!affinity_set) InterlockedIncrement(&state->affinity_failures);
++    old_processor = set_emulated_processor_index(call->processor_index);
++    old_irql = ntoskrnl_set_current_irql(WINE_IPI_LEVEL);
++
++    InterlockedIncrement(&state->arrived);
++    while (!InterlockedCompareExchange(&state->start, 0, 0)) YieldProcessor();
++
++    if (!InterlockedCompareExchange(&state->abort, 0, 0))
++    {
++        __TRY
++        {
++            state->function(state->argument);
++        }
++        __EXCEPT_ALL
++        {
++            InterlockedCompareExchange(&state->exception_code, GetExceptionCode(), 0);
++        }
++        __ENDTRY
++    }
+ 
++    ntoskrnl_set_current_irql(old_irql);
++    restore_emulated_processor_index(old_processor);
++    if (affinity_set)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                &old_affinity, sizeof(old_affinity));
++    InterlockedIncrement(&state->done);
++}
++
++static BOOL ensure_ipi_call_pool(ULONG remote_count)
++{
++    struct ipi_call_context *contexts;
++
++    if (!remote_count) return TRUE;
++
++    if (ipi_call_context_count < remote_count)
++    {
++        if (!(contexts = realloc(ipi_call_contexts, sizeof(*contexts) * remote_count)))
++        {
++            ERR("Failed to allocate %lu IPI contexts.\n", remote_count);
++            return FALSE;
++        }
++        ipi_call_contexts = contexts;
++        ipi_call_context_count = remote_count;
++    }
++
++    if (ipi_call_tp) return TRUE;
++    if (!(ipi_call_tp = CreateThreadpool(NULL)))
++    {
++        ERR("Failed to create the IPI thread pool.\n");
++        return FALSE;
++    }
++
++    SetThreadpoolThreadMaximum(ipi_call_tp, remote_count);
++    if (!SetThreadpoolThreadMinimum(ipi_call_tp, remote_count))
++    {
++        ERR("Failed to reserve %lu IPI worker threads.\n", remote_count);
++        CloseThreadpool(ipi_call_tp);
++        ipi_call_tp = NULL;
++        return FALSE;
++    }
++
++    memset(&ipi_call_tpe, 0, sizeof(ipi_call_tpe));
++    ipi_call_tpe.Version = 1;
++    ipi_call_tpe.Pool = ipi_call_tp;
++    ipi_call_tpe.RaceDll = ntoskrnl_instance;
++    return TRUE;
++}
++
+ ULONG_PTR WINAPI KeIpiGenericCall(KIPI_BROADCAST_WORKER function, ULONG_PTR context)
+ {
+-    /* Wine cannot issue kernel IPIs. Run the worker synchronously on the
+-     * calling processor, matching the FineWine ACE-CORE compatibility path. */
+-    FIXME("(%p, %#Ix): semi-stub, running on the calling processor only.\n", function, context);
+-    return function(context);
++    struct ipi_call_state state;
++    GROUP_AFFINITY old_affinity;
++    ULONG_PTR source_result = 0;
++    ULONG source_index, remote_count, index, submitted;
++    void *old_processor;
++    KIRQL old_irql;
++    BOOL affinity_set;
++
++    TRACE("function %p, context %#Ix.\n", function, context);
++
++    /* A nested broadcast cannot acquire the serialization lock while an
++     * outer worker owns it. Windows callers must enter below IPI_LEVEL. */
++    if (ntoskrnl_get_current_irql() >= WINE_IPI_LEVEL)
++    {
++        ERR("Nested IPI broadcast at IRQL %u.\n",
++                ntoskrnl_get_current_irql());
++        RtlRaiseStatus(STATUS_INVALID_DEVICE_STATE);
++    }
++
++    EnterCriticalSection(&ipi_call_cs);
++    source_index = get_current_processor_index();
++    if (source_index >= processor_index_count || !processor_index_count)
++    {
++        ERR("No active source processor for IPI broadcast.\n");
++        LeaveCriticalSection(&ipi_call_cs);
++        RtlRaiseStatus(STATUS_INVALID_DEVICE_STATE);
++    }
++    remote_count = processor_index_count - 1;
++
++    if (!ensure_ipi_call_pool(remote_count))
++    {
++        LeaveCriticalSection(&ipi_call_cs);
++        RtlRaiseStatus(STATUS_INSUFFICIENT_RESOURCES);
++    }
++
++    memset(&state, 0, sizeof(state));
++    state.function = function;
++    state.argument = context;
++    submitted = 0;
++
++    for (index = 0; index < processor_index_count; index++)
++    {
++        struct ipi_call_context *call;
++
++        if (index == source_index) continue;
++        call = &ipi_call_contexts[submitted];
++        call->state = &state;
++        call->processor_index = index;
++        if (!TrySubmitThreadpoolCallback(ipi_call_callback, call, &ipi_call_tpe)) break;
++        submitted++;
++    }
++
++    if (submitted != remote_count)
++    {
++        InterlockedExchange(&state.abort, 1);
++        InterlockedExchange(&state.start, 1);
++        while (InterlockedCompareExchange(&state.done, 0, 0) != submitted)
++            SwitchToThread();
++        ERR("Submitted only %lu of %lu IPI callbacks.\n", submitted, remote_count);
++        LeaveCriticalSection(&ipi_call_cs);
++        RtlRaiseStatus(STATUS_INSUFFICIENT_RESOURCES);
++    }
++
++    affinity_set = set_processor_affinity(source_index, &old_affinity);
++    if (!affinity_set) InterlockedIncrement(&state.affinity_failures);
++    old_processor = set_emulated_processor_index(source_index);
++    old_irql = ntoskrnl_set_current_irql(WINE_IPI_LEVEL);
++
++    while (InterlockedCompareExchange(&state.arrived, 0, 0) != remote_count)
++        SwitchToThread();
++    InterlockedExchange(&state.start, 1);
++    __TRY
++    {
++        source_result = function(context);
++    }
++    __EXCEPT_ALL
++    {
++        InterlockedCompareExchange(&state.exception_code, GetExceptionCode(), 0);
++    }
++    __ENDTRY
++    while (InterlockedCompareExchange(&state.done, 0, 0) != remote_count)
++        SwitchToThread();
++
++    ntoskrnl_set_current_irql(old_irql);
++    restore_emulated_processor_index(old_processor);
++    if (affinity_set)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                &old_affinity, sizeof(old_affinity));
++    if (state.affinity_failures)
++        WARN("IPI broadcast completed with %ld affinity failures.\n", state.affinity_failures);
++
++    LeaveCriticalSection(&ipi_call_cs);
++    if (state.exception_code) RtlRaiseStatus(state.exception_code);
++    return source_result;
+ }
+ 
+ 
+@@ -4587,21 +4872,27 @@
+  */
+ ULONG WINAPI KeGetCurrentProcessorNumberEx(PPROCESSOR_NUMBER process_number)
+ {
+-    ULONG cur_number = NtGetCurrentProcessorNumber();
+-
+-    FIXME("%p semi-stub\n", process_number);
++    ULONG index = get_current_processor_index();
+ 
+-    if (process_number)
+-    {
+-        process_number->Group = 0;
+-        process_number->Reserved = 0;
+-        process_number->Number = cur_number;
+-    }
++    TRACE("process_number %p, index %lu.\n", process_number, index);
+ 
+-    return cur_number;
++    if (process_number && index < processor_index_count)
++        *process_number = processor_index_table[index];
++
++    return index;
+ }
+ 
+ /***********************************************************************
++ *          KeGetCurrentProcessorNumber   (NTOSKRNL.EXE.@)
++ */
++ULONG WINAPI KeGetCurrentProcessorNumber(void)
++{
++    ULONG index = get_current_processor_index();
++
++    return index < processor_index_count ? processor_index_table[index].Number : 0;
++}
++
++/***********************************************************************
+  *          KeQueryGroupAffinity   (NTOSKRNL.EXE.@)
+  */
+ KAFFINITY WINAPI KeQueryGroupAffinity(USHORT group_number)
+@@ -5659,6 +5950,11 @@
+ {
+     FIXME("stub: %lu %d\n", time, set_resolution);
+     return KeQueryTimeIncrement();
++}
++
++void WINAPI ExRaiseStatus(NTSTATUS status)
++{
++    RtlRaiseStatus(status);
+ }
+ 
+ /***********************************************************************
+@@ -5706,8 +6002,19 @@
+     return !KdDebuggerEnabled;
+ }
+ 
++struct generic_call_dpc_state
++{
++    volatile LONG arrived;
++    volatile LONG start;
++    volatile LONG abort;
++    volatile LONG done;
++    volatile LONG affinity_failures;
++    volatile LONG exception_code;
++};
++
+ struct generic_call_dpc_context
+ {
++    struct generic_call_dpc_state *state;
+     DEFERRED_REVERSE_BARRIER *reverse_barrier;
+     PKDEFERRED_ROUTINE routine;
+     ULONG *cpu_count_barrier;
+@@ -5717,41 +6024,72 @@
+     LONG *barrier_passed_count;
+ };
+ 
++static struct generic_call_dpc_context *dpc_call_contexts;
++static ULONG dpc_call_context_count;
++
+ static void WINAPI generic_call_dpc_callback(TP_CALLBACK_INSTANCE *instance, void *context)
+ {
+     struct generic_call_dpc_context *c = context;
+-    GROUP_AFFINITY old, new;
++    GROUP_AFFINITY old_affinity;
++    void *old_dpc_context, *old_processor;
++    KIRQL old_irql;
++    BOOL affinity_set;
+ 
+     TRACE("instance %p, context %p.\n", instance, context);
+ 
+-    NtQueryInformationThread(GetCurrentThread(), ThreadGroupInformation,
+-            &old, sizeof(old), NULL);
+-
+-    memset(&new, 0, sizeof(new));
++    affinity_set = set_processor_affinity(c->cpu_index, &old_affinity);
++    if (!affinity_set) InterlockedIncrement(&c->state->affinity_failures);
++    old_processor = set_emulated_processor_index(c->cpu_index);
++    old_irql = ntoskrnl_set_current_irql(WINE_DISPATCH_LEVEL);
++    old_dpc_context = TlsGetValue(dpc_call_tls_index);
++    TlsSetValue(dpc_call_tls_index, context);
+ 
+-    new.Mask = 1 << c->cpu_index;
+-    NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation, &new, sizeof(new));
++    InterlockedIncrement(&c->state->arrived);
++    while (!InterlockedCompareExchange(&c->state->start, 0, 0)) YieldProcessor();
++    if (!InterlockedCompareExchange(&c->state->abort, 0, 0))
++    {
++        __TRY
++        {
++            c->routine((PKDPC)0xdeadbeef, c->context,
++                    c->cpu_count_barrier, c->reverse_barrier);
++        }
++        __EXCEPT_ALL
++        {
++            InterlockedCompareExchange(&c->state->exception_code, GetExceptionCode(), 0);
++            InterlockedExchange(&c->state->abort, 1);
++        }
++        __ENDTRY
++    }
+ 
+-    TlsSetValue(dpc_call_tls_index, context);
+-    c->routine((PKDPC)0xdeadbeef, c->context, c->cpu_count_barrier, c->reverse_barrier);
+-    TlsSetValue(dpc_call_tls_index, NULL);
+-    NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation, &old, sizeof(old));
++    TlsSetValue(dpc_call_tls_index, old_dpc_context);
++    ntoskrnl_set_current_irql(old_irql);
++    restore_emulated_processor_index(old_processor);
++    if (affinity_set)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                &old_affinity, sizeof(old_affinity));
++    InterlockedIncrement(&c->state->done);
+ }
+ 
+ void WINAPI KeGenericCallDpc(PKDEFERRED_ROUTINE routine, void *context)
+ {
+     ULONG cpu_count = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+-    static struct generic_call_dpc_context *contexts;
++    struct generic_call_dpc_state state;
+     DEFERRED_REVERSE_BARRIER reverse_barrier;
+-    static ULONG last_cpu_count;
+     LONG barrier_passed_count;
+     ULONG cpu_count_barrier;
+-    ULONG i;
++    ULONG i, submitted;
+ 
+     TRACE("routine %p, context %p.\n", routine, context);
+ 
+     EnterCriticalSection(&dpc_call_cs);
+ 
++    if (!cpu_count)
++    {
++        ERR("No active processors for generic DPC call.\n");
++        LeaveCriticalSection(&dpc_call_cs);
++        return;
++    }
++
+     if (!dpc_call_tp)
+     {
+         if (!(dpc_call_tp = CreateThreadpool(NULL)))
+@@ -5761,52 +6099,94 @@
+             return;
+         }
+ 
+-        SetThreadpoolThreadMinimum(dpc_call_tp, cpu_count);
+         SetThreadpoolThreadMaximum(dpc_call_tp, cpu_count);
++        if (!SetThreadpoolThreadMinimum(dpc_call_tp, cpu_count))
++        {
++            ERR("Could not reserve %lu generic DPC threads.\n", cpu_count);
++            CloseThreadpool(dpc_call_tp);
++            dpc_call_tp = NULL;
++            LeaveCriticalSection(&dpc_call_cs);
++            return;
++        }
+ 
+         memset(&dpc_call_tpe, 0, sizeof(dpc_call_tpe));
+         dpc_call_tpe.Version = 1;
+         dpc_call_tpe.Pool = dpc_call_tp;
++        dpc_call_tpe.RaceDll = ntoskrnl_instance;
+     }
+ 
+     reverse_barrier.Barrier = cpu_count;
+     reverse_barrier.TotalProcessors = cpu_count;
+     cpu_count_barrier = cpu_count;
+ 
+-    if (last_cpu_count < cpu_count)
++    if (dpc_call_context_count < cpu_count)
+     {
+         struct generic_call_dpc_context *new_contexts;
+-        if (!(new_contexts = realloc(contexts, sizeof(*contexts) * cpu_count)))
++        if (!(new_contexts = realloc(dpc_call_contexts,
++                sizeof(*dpc_call_contexts) * cpu_count)))
+         {
+             ERR("No memory.\n");
+             LeaveCriticalSection(&dpc_call_cs);
+             return;
+         }
+-        contexts = new_contexts;
+-        SetThreadpoolThreadMinimum(dpc_call_tp, cpu_count);
+-        SetThreadpoolThreadMaximum(dpc_call_tp, cpu_count);
++        dpc_call_contexts = new_contexts;
++        dpc_call_context_count = cpu_count;
+     }
+ 
+-    memset(contexts, 0, sizeof(*contexts) * cpu_count);
+-    last_cpu_count = cpu_count;
++    memset(dpc_call_contexts, 0, sizeof(*dpc_call_contexts) * cpu_count);
++    memset(&state, 0, sizeof(state));
+     barrier_passed_count = 0;
++    submitted = 0;
+ 
+     for (i = 0; i < cpu_count; ++i)
+     {
+-        contexts[i].reverse_barrier = &reverse_barrier;
+-        contexts[i].cpu_count_barrier = &cpu_count_barrier;
+-        contexts[i].routine = routine;
+-        contexts[i].context = context;
+-        contexts[i].cpu_index = i;
+-        contexts[i].barrier_passed_count = &barrier_passed_count;
++        dpc_call_contexts[i].state = &state;
++        dpc_call_contexts[i].reverse_barrier = &reverse_barrier;
++        dpc_call_contexts[i].cpu_count_barrier = &cpu_count_barrier;
++        dpc_call_contexts[i].routine = routine;
++        dpc_call_contexts[i].context = context;
++        dpc_call_contexts[i].cpu_index = i;
++        dpc_call_contexts[i].barrier_passed_count = &barrier_passed_count;
+ 
+-        TrySubmitThreadpoolCallback(generic_call_dpc_callback, &contexts[i], &dpc_call_tpe);
++        if (!TrySubmitThreadpoolCallback(generic_call_dpc_callback,
++                &dpc_call_contexts[i], &dpc_call_tpe))
++            break;
++        submitted++;
+     }
+ 
+-    while (InterlockedCompareExchange((LONG *)&cpu_count_barrier, 0, 0))
++    if (submitted != cpu_count)
++    {
++        InterlockedExchange(&state.abort, 1);
++        InterlockedExchange(&state.start, 1);
++        while (InterlockedCompareExchange(&state.done, 0, 0) != submitted)
++            SwitchToThread();
++        ERR("Submitted only %lu of %lu generic DPC callbacks.\n", submitted, cpu_count);
++        LeaveCriticalSection(&dpc_call_cs);
++        return;
++    }
++
++    while (InterlockedCompareExchange(&state.arrived, 0, 0) != cpu_count)
+         SwitchToThread();
++    if (state.affinity_failures) InterlockedExchange(&state.abort, 1);
++    InterlockedExchange(&state.start, 1);
+ 
++    if (state.abort)
++    {
++        while (InterlockedCompareExchange(&state.done, 0, 0) != cpu_count)
++            SwitchToThread();
++        ERR("Generic DPC call aborted after %ld affinity failures.\n", state.affinity_failures);
++        LeaveCriticalSection(&dpc_call_cs);
++        return;
++    }
++
++    while (InterlockedCompareExchange((LONG *)&cpu_count_barrier, 0, 0) &&
++            !InterlockedCompareExchange(&state.exception_code, 0, 0))
++        SwitchToThread();
++    while (InterlockedCompareExchange(&state.done, 0, 0) != cpu_count)
++        SwitchToThread();
++
+     LeaveCriticalSection(&dpc_call_cs);
++    if (state.exception_code) RtlRaiseStatus(state.exception_code);
+ }
+ 
+ 
+@@ -5836,12 +6216,12 @@
+         InterlockedExchange((LONG *)&b->Barrier, comp);
+ 
+     while (InterlockedCompareExchange((LONG *)&b->Barrier, comp + 1, comp) != done_value)
+-        ;
++        if (InterlockedCompareExchange(&context->state->abort, 0, 0)) return FALSE;
+ 
+     InterlockedIncrement(context->barrier_passed_count);
+ 
+     while (first && InterlockedCompareExchange(context->barrier_passed_count, 0, b->TotalProcessors))
+-        ;
++        if (InterlockedCompareExchange(&context->state->abort, 0, 0)) return FALSE;
+ 
+     return first;
+ }
+@@ -5918,20 +6298,21 @@
+ 
+ #ifdef __x86_64__
+ 
+-void WINAPI KfRaiseIrql(KIRQL new, KIRQL *old)
++KIRQL WINAPI KfRaiseIrql(KIRQL new)
+ {
+-    FIXME("new %u old %p: stub.\n", new, old);
++    TRACE("new %u.\n", new);
++    return ntoskrnl_set_current_irql(new);
+ }
+ 
+ void WINAPI KeLowerIrql(KIRQL new)
+ {
+-    FIXME("new %u: stub.\n", new);
++    TRACE("new %u.\n", new);
++    ntoskrnl_set_current_irql(new);
+ }
+ 
+ KIRQL WINAPI KeGetCurrentIrql(void)
+ {
+-    FIXME("stub.\n");
+-    return 0;
++    return ntoskrnl_get_current_irql();
+ }
+ 
+ #endif
+@@ -5989,14 +6370,46 @@
+         mm_user_probe_address = (ULONG_PTR)info.HighestUserAddress + 1;
+         if (!initialize_processor_index_table()) return FALSE;
+         processor_index_initialized = TRUE;
++        ntoskrnl_instance = inst;
+         DisableThreadLibraryCalls( inst );
+ #if defined(__i386__) || defined(__x86_64__)
+-        handler = RtlAddVectoredExceptionHandler( TRUE, vectored_handler );
++        if (!(handler = RtlAddVectoredExceptionHandler( TRUE, vectored_handler )))
++        {
++            ERR("Failed to register the privileged-instruction handler.\n");
++            HeapFree(GetProcessHeap(), 0, processor_index_table);
++            processor_index_initialized = FALSE;
++            ntoskrnl_instance = NULL;
++            return FALSE;
++        }
+ #endif
+         KeQueryTickCount( &count );  /* initialize the global KeTickCount */
+         NtBuildNumber = NtCurrentTeb()->Peb->OSBuildNumber;
+-        ntoskrnl_heap = HeapCreate( HEAP_CREATE_ENABLE_EXECUTE, 0, 0 );
++        if (!(ntoskrnl_heap = HeapCreate( HEAP_CREATE_ENABLE_EXECUTE, 0, 0 )))
++        {
++            ERR("Failed to create the kernel object heap.\n");
++            if (handler) RtlRemoveVectoredExceptionHandler(handler);
++            HeapFree(GetProcessHeap(), 0, processor_index_table);
++            processor_index_initialized = FALSE;
++            ntoskrnl_instance = NULL;
++            return FALSE;
++        }
+         dpc_call_tls_index = TlsAlloc();
++        irql_tls_index = TlsAlloc();
++        processor_number_tls_index = TlsAlloc();
++        if (dpc_call_tls_index == TLS_OUT_OF_INDEXES || irql_tls_index == TLS_OUT_OF_INDEXES ||
++                processor_number_tls_index == TLS_OUT_OF_INDEXES)
++        {
++            ERR("Failed to allocate kernel callback TLS slots.\n");
++            if (handler) RtlRemoveVectoredExceptionHandler(handler);
++            if (dpc_call_tls_index != TLS_OUT_OF_INDEXES) TlsFree(dpc_call_tls_index);
++            if (irql_tls_index != TLS_OUT_OF_INDEXES) TlsFree(irql_tls_index);
++            if (processor_number_tls_index != TLS_OUT_OF_INDEXES) TlsFree(processor_number_tls_index);
++            HeapDestroy(ntoskrnl_heap);
++            HeapFree(GetProcessHeap(), 0, processor_index_table);
++            processor_index_initialized = FALSE;
++            ntoskrnl_instance = NULL;
++            return FALSE;
++        }
+         LdrRegisterDllNotification( 0, ldr_notify_callback, NULL, &ldr_notify_cookie );
+         break;
+     case DLL_PROCESS_DETACH:
+@@ -6006,13 +6419,22 @@
+ 
+         if (reserved) break;
+ 
+-        HeapFree( GetProcessHeap(), 0, processor_index_table );
+-
+         if (dpc_call_tp)
+             CloseThreadpool(dpc_call_tp);
++        if (ipi_call_tp)
++            CloseThreadpool(ipi_call_tp);
++        free(ipi_call_contexts);
++        free(dpc_call_contexts);
+ 
++        if (handler) RtlRemoveVectoredExceptionHandler( handler );
++        TlsFree(processor_number_tls_index);
++        TlsFree(irql_tls_index);
++        TlsFree(dpc_call_tls_index);
++
++        HeapFree( GetProcessHeap(), 0, processor_index_table );
+         HeapDestroy( ntoskrnl_heap );
+-        RtlRemoveVectoredExceptionHandler( handler );
++        processor_index_initialized = FALSE;
++        ntoskrnl_instance = NULL;
+         break;
+     }
+     return TRUE;
+--- a/dlls/ntoskrnl.exe/ntoskrnl_private.h
++++ b/dlls/ntoskrnl.exe/ntoskrnl_private.h
+@@ -115,6 +115,13 @@
+ 
+ void ObReferenceObject( void *obj );
+ 
++/* Shared with the privileged-instruction emulator so that KeGetCurrentIrql()
++ * and direct CR8 access observe the same per-thread kernel IRQL. */
++KIRQL ntoskrnl_get_current_irql(void);
++KIRQL ntoskrnl_set_current_irql(KIRQL irql);
++
++#define WINE_DISPATCH_LEVEL 2
++
+ void pnp_manager_start(void);
+ void pnp_manager_stop_driver( struct wine_driver *driver );
+ void pnp_manager_stop(void);
+--- a/dlls/ntoskrnl.exe/instr.c
++++ b/dlls/ntoskrnl.exe/instr.c
+@@ -29,6 +29,10 @@
+ #include "ddk/wdm.h"
+ #include "excpt.h"
+ #include "wine/debug.h"
++
++/* Keep direct CR8 reads/writes coherent with the exported IRQL helpers. */
++KIRQL ntoskrnl_get_current_irql(void);
++KIRQL ntoskrnl_set_current_irql(KIRQL irql);
+ 
+ #define KSHARED_USER_DATA_PAGE_SIZE 0x1000
+ 
+@@ -735,7 +739,7 @@
+             case 2: *data = 0; break;
+             case 3: *data = 0; break;
+             case 4: *data = 0; break;
+-            case 8: *data = 0; break;
++            case 8: *data = ntoskrnl_get_current_irql(); break;
+             default: return ExceptionContinueSearch;
+             }
+             context->Rip += prefixlen + 3;
+@@ -774,7 +778,7 @@
+             case 2: break;
+             case 3: break;
+             case 4: break;
+-            case 8: break;
++            case 8: ntoskrnl_set_current_irql(*data & 0x0f); break;
+             default: return ExceptionContinueSearch;
+             }
+             context->Rip += prefixlen + 3;
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -190,7 +190,7 @@
+ @ stub ExRaiseDatatypeMisalignment
+ @ stub ExRaiseException
+ @ stub ExRaiseHardError
+-@ stub ExRaiseStatus
++@ stdcall ExRaiseStatus(long)
+ @ stdcall ExRegisterCallback(ptr ptr ptr)
+ @ stub ExReinitializeResourceLite
+ @ stdcall ExReleaseResourceForThreadLite(ptr long)
+@@ -567,7 +567,7 @@
+ @ stub KeFlushEntireTb
+ @ stdcall KeFlushQueuedDpcs()
+ @ stdcall -arch=x86_64 KeGetCurrentIrql()
+-@ stdcall KeGetCurrentProcessorNumber() NtGetCurrentProcessorNumber
++@ stdcall KeGetCurrentProcessorNumber()
+ @ stdcall KeGetCurrentProcessorNumberEx(ptr)
+ @ stdcall KeGetCurrentThread()
+ 1678 stdcall KeGetProcessorIndexFromNumber(ptr)
+@@ -688,7 +688,7 @@
+ @ stdcall KeWaitForMultipleObjects(long ptr long long long long ptr ptr)
+ @ stdcall KeWaitForMutexObject(ptr long long long ptr)
+ @ stdcall KeWaitForSingleObject(ptr long long long ptr)
+-@ stdcall -arch=x86_64 KfRaiseIrql(long ptr)
++@ stdcall -arch=x86_64 KfRaiseIrql(long)
+ @ stub KiBugCheckData
+ @ stub KiCoprocessorError
+ @ stub KiDeliverApc
+--- a/dlls/ntoskrnl.exe/sync.c
++++ b/dlls/ntoskrnl.exe/sync.c
+@@ -744,6 +744,7 @@
+ {
+     TRACE("lock %p, irql %u.\n", lock, irql);
+     KeReleaseSpinLockFromDpcLevel( lock );
++    ntoskrnl_set_current_irql( irql );
+ }
+ 
+ /***********************************************************************
+@@ -751,9 +752,12 @@
+  */
+ KIRQL WINAPI KeAcquireSpinLockRaiseToDpc( KSPIN_LOCK *lock )
+ {
++    KIRQL old_irql = ntoskrnl_get_current_irql();
++
+     TRACE("lock %p.\n", lock);
++    if (old_irql < WINE_DISPATCH_LEVEL) ntoskrnl_set_current_irql( WINE_DISPATCH_LEVEL );
+     KeAcquireSpinLockAtDpcLevel( lock );
+-    return 0;
++    return old_irql;
+ }
+ 
+ /***********************************************************************
+@@ -762,6 +766,8 @@
+ void WINAPI KeAcquireInStackQueuedSpinLock( KSPIN_LOCK *lock, KLOCK_QUEUE_HANDLE *queue )
+ {
+     TRACE("lock %p, queue %p.\n", lock, queue);
++    queue->OldIrql = ntoskrnl_get_current_irql();
++    if (queue->OldIrql < WINE_DISPATCH_LEVEL) ntoskrnl_set_current_irql( WINE_DISPATCH_LEVEL );
+     KeAcquireInStackQueuedSpinLockAtDpcLevel( lock, queue );
+ }
+ 
+@@ -770,8 +776,11 @@
+  */
+ void WINAPI KeReleaseInStackQueuedSpinLock( KLOCK_QUEUE_HANDLE *queue )
+ {
++    KIRQL old_irql = queue->OldIrql;
++
+     TRACE("queue %p.\n", queue);
+     KeReleaseInStackQueuedSpinLockFromDpcLevel( queue );
++    ntoskrnl_set_current_irql( old_irql );
+ }
+ #endif

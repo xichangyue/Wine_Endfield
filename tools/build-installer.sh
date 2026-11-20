@@ -3,7 +3,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PAYLOAD="${1:?提供含 Recovery 完整 tar.xz 的目录}"
 OUTPUT="${2:?输出目录}"
-VERSION="${3:-v0.4.1-preview}"
+VERSION="${3:-v0.4.2-preview}"
 [[ "$VERSION" =~ ^v[0-9][A-Za-z0-9._-]*$ ]] || { echo '版本号格式无效'; exit 1; }
 PAYLOAD="$(cd "$PAYLOAD" && pwd)"
 mkdir -p "$OUTPUT"
@@ -14,7 +14,7 @@ ZIP="$OUTPUT/Wine_Endfield-Installer-${VERSION#v}.zip"
 name="Wine_Endfield-Recovery-$VERSION.tar.xz"
 archive="$PAYLOAD/$name"
 [ -f "$archive" ] || { echo "缺少资源：$archive"; exit 1; }
-for script in setup.sh run.sh common.sh cleanup.sh; do
+for script in setup.sh run.sh common.sh cleanup.sh diagnose.sh; do
   bash -n "$REPO/installer/$script"
 done
 # Do not follow links or allow archives to supply private data or unrelated roots.
@@ -51,7 +51,7 @@ FINAL_APP="$APP"
 APP="$BUILD/终末地 Mac 安装器.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -O -target arm64-apple-macos26.0 "$REPO/installer/Installer.swift" -o "$APP/Contents/MacOS/EndfieldInstaller"
-cp "$REPO/installer/setup.sh" "$REPO/installer/run.sh" "$REPO/installer/common.sh" "$REPO/installer/cleanup.sh" "$APP/Contents/Resources/"
+cp "$REPO/installer/setup.sh" "$REPO/installer/run.sh" "$REPO/installer/common.sh" "$REPO/installer/cleanup.sh" "$REPO/installer/diagnose.sh" "$APP/Contents/Resources/"
 cp "$REPO/installer/README.zh-CN.md" "$REPO/THIRD_PARTY.md" "$REPO/LICENSE" "$APP/Contents/Resources/"
 cp "$REPO/VALIDATION.md" "$APP/Contents/Resources/"
 [ ! -f "$REPO/installer/RELEASE_NOTES.md" ] || cp "$REPO/installer/RELEASE_NOTES.md" "$APP/Contents/Resources/"
@@ -67,9 +67,10 @@ plutil -insert CFBundleName -string '终末地 Mac 安装器' "$APP/Contents/Inf
 plutil -insert CFBundlePackageType -string APPL "$APP/Contents/Info.plist"
 plutil -insert CFBundleShortVersionString -string "${VERSION#v}" "$APP/Contents/Info.plist"
 plutil -insert LSMinimumSystemVersion -string 26.0 "$APP/Contents/Info.plist"
+/usr/bin/xattr -cr "$APP"
 codesign --force --sign - "$APP"
 codesign --verify --strict "$APP"
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "$BUILD/installer.zip"
+COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent "$APP" "$BUILD/installer.zip"
 /usr/bin/unzip -tq "$BUILD/installer.zip"
 mv "$APP" "$FINAL_APP"
 mv "$BUILD/installer.zip" "$ZIP"

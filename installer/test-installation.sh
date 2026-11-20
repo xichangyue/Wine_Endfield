@@ -5,6 +5,7 @@ DEST="$(cd "${1:?installation root}" && pwd)"
 test -f "$DEST/.endfield-installer-v1"
 test -f "$DEST/Launcher/Launcher.exe"
 test -f "$DEST/payload-manifest.tsv"
+test -x "$DEST/diagnose.sh"
 /bin/bash "$DEST/run.sh" --check
 test "$(readlink "$DEST/State/prefix/drive_c/Endfield")" = '../../../Game'
 test "$(readlink "$DEST/State/prefix/drive_c/Hypergryph Launcher")" = '../../../Launcher'
@@ -14,9 +15,9 @@ test -d "$DEST/State/prefix/drive_c/Endfield"
 test -f "$DEST/State/prefix/drive_c/Hypergryph Launcher/Launcher.exe"
 (cd "$DEST/Recovery/runtime" && shasum -a 256 -c ../RUNTIME-SHA256.txt) > /dev/null
 (cd "$DEST/Recovery" && shasum -a 256 -c PROFILE-SHA256.txt) > /dev/null
-for name in '终末地' '终末地 Vulkan' '终末地 DX11' '终末地 更新与修复'; do
+for name in '终末地' '终末地兼容诊断' '终末地 Vulkan' '终末地 DX11' '终末地 更新与修复'; do
   app="$DEST/Apps/$name.app"
-  if [ "$name" = '终末地' ]; then test -d "$app"; else [ -d "$app" ] || continue; fi
+  if [ "$name" = '终末地' ] || [ "$name" = '终末地兼容诊断' ]; then test -d "$app"; else [ -d "$app" ] || continue; fi
   codesign --verify --strict "$app"
   "$app/Contents/MacOS/EndfieldInstaller" --check
 done

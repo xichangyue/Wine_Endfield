@@ -1,0 +1,88 @@
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -3735,6 +3735,19 @@ ULONG WINAPI KeQueryTimeIncrement(void)
+ {
+     return 10000;
+ }
++
++/***********************************************************************
++ *           KeIpiGenericCall   (NTOSKRNL.EXE.@)
++ */
++typedef ULONG_PTR (WINAPI *KIPI_BROADCAST_WORKER)(ULONG_PTR);
++
++ULONG_PTR WINAPI KeIpiGenericCall(KIPI_BROADCAST_WORKER function, ULONG_PTR context)
++{
++    /* Wine cannot issue kernel IPIs. Run the worker synchronously on the
++     * calling processor, matching the FineWine ACE-CORE compatibility path. */
++    FIXME("(%p, %#Ix): semi-stub, running on the calling processor only.\n", function, context);
++    return function(context);
++}
+ 
+ 
+ /***********************************************************************
+@@ -3803,6 +3816,37 @@ void WINAPI KeRevertToUserAffinityThreadEx(KAFFINITY affinity)
+     NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation, &new, sizeof(new));
+     thread->user_affinity = affinity;
+ }
++
++/***********************************************************************
++ *           KeSetSystemGroupAffinityThread   (NTOSKRNL.EXE.@)
++ */
++void WINAPI KeSetSystemGroupAffinityThread(PGROUP_AFFINITY affinity, PGROUP_AFFINITY previous)
++{
++    GROUP_AFFINITY old;
++
++    TRACE("affinity %p, previous %p.\n", affinity, previous);
++
++    memset(&old, 0, sizeof(old));
++    NtQueryInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                             &old, sizeof(old), NULL);
++    if (previous) *previous = old;
++
++    if (affinity)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                               affinity, sizeof(*affinity));
++}
++
++/***********************************************************************
++ *           KeRevertToUserGroupAffinityThread   (NTOSKRNL.EXE.@)
++ */
++void WINAPI KeRevertToUserGroupAffinityThread(PGROUP_AFFINITY previous)
++{
++    TRACE("previous %p.\n", previous);
++
++    if (previous)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                               previous, sizeof(*previous));
++}
+ 
+ /***********************************************************************
+  *           IoRegisterFileSystem   (NTOSKRNL.EXE.@)
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -653,6 +653,7 @@
+ @ stub KeRestoreFloatingPointState
+ @ stdcall KeRevertToUserAffinityThread()
+ @ stdcall KeRevertToUserAffinityThreadEx(long)
++@ stdcall KeRevertToUserGroupAffinityThread(ptr)
+ @ stub KeRundownQueue
+ @ stub KeSaveFloatingPointState
+ @ stub KeSaveStateForHibernate
+@@ -669,6 +670,7 @@
+ @ stub KeSetProfileIrql
+ @ stdcall KeSetSystemAffinityThread(long)
+ @ stdcall KeSetSystemAffinityThreadEx(long)
++@ stdcall KeSetSystemGroupAffinityThread(ptr ptr)
+ @ stdcall KeSetTargetProcessorDpc(ptr long)
+ @ stdcall KeSetTargetProcessorDpcEx(ptr ptr)
+ @ stub KeSetTimeIncrement
+@@ -692,6 +694,7 @@
+ @ stub KiDeliverApc
+ @ stub KiDispatchInterrupt
+ @ stub KiEnableTimerWatchdog
++@ stdcall KeIpiGenericCall(ptr long)
+ @ stub KiIpiServiceRoutine
+ @ stub KiUnexpectedInterrupt
+ @ stdcall LdrAccessResource(long ptr ptr ptr)

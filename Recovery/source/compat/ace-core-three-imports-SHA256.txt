@@ -1,0 +1,2 @@
+277e4f1256c620c10c1aaf85e52e1b59c53f493f48896477068ba7f84d1be702  dlls/ntoskrnl.exe/ntoskrnl.c
+db8c816afd56c99887322a0dc7fb690c2a68b44e9b665005357ec9ec5d2086f7  dlls/ntoskrnl.exe/ntoskrnl.exe.spec

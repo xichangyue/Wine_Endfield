@@ -1,0 +1,280 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Endfield Mac Lab <1725548630@qq.com>
+Date: Thu, 12 Nov 2026 00:00:00 +0800
+Subject: [PATCH] ntoskrnl, wineboot: complete ACE-CORE startup compatibility
+
+Combine the remaining public FineWine/dwproton ACE-CORE fixes needed by the
+published Endfield runtime: three kernel imports, MmCopyMemory, and deterministic
+SamSs registration/startup.  The runtime already ships Wine 11.17's full LSA/RPC
+implementation, so start it through the service manager instead of replacing it
+with the older compatibility stub.
+
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.c b/dlls/ntoskrnl.exe/ntoskrnl.c
+--- a/dlls/ntoskrnl.exe/ntoskrnl.c
++++ b/dlls/ntoskrnl.exe/ntoskrnl.c
+@@ -3735,6 +3735,19 @@ ULONG WINAPI KeQueryTimeIncrement(void)
+ {
+     return 10000;
+ }
++
++/***********************************************************************
++ *           KeIpiGenericCall   (NTOSKRNL.EXE.@)
++ */
++typedef ULONG_PTR (WINAPI *KIPI_BROADCAST_WORKER)(ULONG_PTR);
++
++ULONG_PTR WINAPI KeIpiGenericCall(KIPI_BROADCAST_WORKER function, ULONG_PTR context)
++{
++    /* Wine cannot issue kernel IPIs. Run the worker synchronously on the
++     * calling processor, matching the FineWine ACE-CORE compatibility path. */
++    FIXME("(%p, %#Ix): semi-stub, running on the calling processor only.\n", function, context);
++    return function(context);
++}
+ 
+ 
+ /***********************************************************************
+@@ -3803,6 +3816,37 @@ void WINAPI KeRevertToUserAffinityThreadEx(KAFFINITY affinity)
+     NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation, &new, sizeof(new));
+     thread->user_affinity = affinity;
+ }
++
++/***********************************************************************
++ *           KeSetSystemGroupAffinityThread   (NTOSKRNL.EXE.@)
++ */
++void WINAPI KeSetSystemGroupAffinityThread(PGROUP_AFFINITY affinity, PGROUP_AFFINITY previous)
++{
++    GROUP_AFFINITY old;
++
++    TRACE("affinity %p, previous %p.\n", affinity, previous);
++
++    memset(&old, 0, sizeof(old));
++    NtQueryInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                             &old, sizeof(old), NULL);
++    if (previous) *previous = old;
++
++    if (affinity)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                               affinity, sizeof(*affinity));
++}
++
++/***********************************************************************
++ *           KeRevertToUserGroupAffinityThread   (NTOSKRNL.EXE.@)
++ */
++void WINAPI KeRevertToUserGroupAffinityThread(PGROUP_AFFINITY previous)
++{
++    TRACE("previous %p.\n", previous);
++
++    if (previous)
++        NtSetInformationThread(GetCurrentThread(), ThreadGroupInformation,
++                               previous, sizeof(*previous));
++}
+ 
+ /***********************************************************************
+  *           IoRegisterFileSystem   (NTOSKRNL.EXE.@)
+@@ -4751,6 +4795,18 @@ PVOID WINAPI PsGetProcessWow64Process(PEPROCESS process)
+     return NULL;
+ }
+ 
++/*********************************************************************
++ *           MmCopyMemory    (NTOSKRNL.@)
++ */
++NTSTATUS WINAPI MmCopyMemory(void *target, MM_COPY_ADDRESS source, SIZE_T size, ULONG flags, SIZE_T *copied)
++{
++    FIXME("target %p, source %s, size %Iu, flags %#lx, copied %p stub.\n",
++            target, wine_dbgstr_longlong(source.PhysicalAddress.QuadPart), size, flags, copied);
++
++    *copied = 0;
++    return STATUS_NOT_IMPLEMENTED;
++}
++
+ /*********************************************************************
+  *           MmCopyVirtualMemory    (NTOSKRNL.@)
+  */
+diff --git a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+--- a/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
++++ b/dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+@@ -653,6 +653,7 @@
+ @ stub KeRestoreFloatingPointState
+ @ stdcall KeRevertToUserAffinityThread()
+ @ stdcall KeRevertToUserAffinityThreadEx(long)
++@ stdcall KeRevertToUserGroupAffinityThread(ptr)
+ @ stub KeRundownQueue
+ @ stub KeSaveFloatingPointState
+ @ stub KeSaveStateForHibernate
+@@ -669,6 +670,7 @@
+ @ stub KeSetProfileIrql
+ @ stdcall KeSetSystemAffinityThread(long)
+ @ stdcall KeSetSystemAffinityThreadEx(long)
++@ stdcall KeSetSystemGroupAffinityThread(ptr ptr)
+ @ stdcall KeSetTargetProcessorDpc(ptr long)
+ @ stdcall KeSetTargetProcessorDpcEx(ptr ptr)
+ @ stub KeSetTimeIncrement
+@@ -692,6 +694,7 @@
+ @ stub KiDeliverApc
+ @ stub KiDispatchInterrupt
+ @ stub KiEnableTimerWatchdog
++@ stdcall KeIpiGenericCall(ptr long)
+ @ stub KiIpiServiceRoutine
+ @ stub KiUnexpectedInterrupt
+ @ stdcall LdrAccessResource(long ptr ptr ptr)
+@@ -716,6 +719,7 @@
+ @ stdcall MmBuildMdlForNonPagedPool(ptr)
+ @ stub MmCanFileBeTruncated
+ @ stub MmCommitSessionMappedView
++@ stdcall MmCopyMemory(ptr int64 long long ptr)
+ @ stdcall MmCopyVirtualMemory(ptr ptr ptr ptr long long ptr)
+ @ stub MmCreateMdl
+ @ stdcall MmCreateSection(ptr long ptr ptr long long long ptr)
+diff --git a/include/ddk/wdm.h b/include/ddk/wdm.h
+--- a/include/ddk/wdm.h
++++ b/include/ddk/wdm.h
+@@ -802,6 +802,16 @@ typedef enum _INTERFACE_TYPE {
+ 
+ typedef LARGE_INTEGER PHYSICAL_ADDRESS, *PPHYSICAL_ADDRESS;
+ 
++#define MM_COPY_MEMORY_PHYSICAL           0x1
++#define MM_COPY_MEMORY_VIRTUAL            0x2
++
++typedef struct _MM_COPY_ADDRESS {
++  union {
++    PVOID            VirtualAddress;
++    PHYSICAL_ADDRESS PhysicalAddress;
++  } DUMMYUNIONNAME;
++} MM_COPY_ADDRESS, *PMM_COPY_ADDRESS;
++
+ #define IO_RESOURCE_PREFERRED             0x01
+ #define IO_RESOURCE_DEFAULT               0x02
+ #define IO_RESOURCE_ALTERNATIVE           0x08
+@@ -1873,6 +1883,7 @@ void      WINAPI MmFreeNonCachedMemory(PVOID,SIZE_T);
+ PVOID     WINAPI MmAllocateNonCachedMemory(SIZE_T) __WINE_ALLOC_SIZE(1) __WINE_DEALLOC(MmFreeNonCachedMemory) __WINE_MALLOC;
+ PMDL      WINAPI MmAllocatePagesForMdl(PHYSICAL_ADDRESS,PHYSICAL_ADDRESS,PHYSICAL_ADDRESS,SIZE_T);
+ void      WINAPI MmBuildMdlForNonPagedPool(MDL*);
++NTSTATUS  WINAPI MmCopyMemory(void*,MM_COPY_ADDRESS,SIZE_T,ULONG,SIZE_T*);
+ NTSTATUS  WINAPI MmCopyVirtualMemory(PEPROCESS,void*,PEPROCESS,void*,SIZE_T,KPROCESSOR_MODE,SIZE_T*);
+ void *    WINAPI MmGetSystemRoutineAddress(UNICODE_STRING*);
+ PVOID     WINAPI MmMapLockedPages(MDL*,KPROCESSOR_MODE);
+diff --git a/loader/wine.inf.in b/loader/wine.inf.in
+--- a/loader/wine.inf.in
++++ b/loader/wine.inf.in
+@@ -139,6 +139,7 @@
+ AddService=HTTP,0,HTTPService
+ AddService=MSIServer,0,MSIService
+ AddService=RpcSs,0,RpcSsService
++AddService=SamSs,0,SamSsService
+ AddService=scardsvr,0,ScardSvrService
+ AddService=Spooler,0,SpoolerService
+ AddService=StiSvc,0,StiService
+@@ -159,6 +160,7 @@
+ AddService=HTTP,0,HTTPService
+ AddService=MSIServer,0,MSIService
+ AddService=RpcSs,0,RpcSsService
++AddService=SamSs,0,SamSsService
+ AddService=scardsvr,0,ScardSvrService
+ AddService=Spooler,0,SpoolerService
+ AddService=StiSvc,0,StiService
+@@ -179,6 +181,7 @@
+ AddService=HTTP,0,HTTPService
+ AddService=MSIServer,0,MSIService
+ AddService=RpcSs,0,RpcSsService
++AddService=SamSs,0,SamSsService
+ AddService=scardsvr,0,ScardSvrService
+ AddService=Spooler,0,SpoolerService
+ AddService=StiSvc,0,StiService
+@@ -199,6 +202,7 @@
+ AddService=HTTP,0,HTTPService
+ AddService=MSIServer,0,MSIService
+ AddService=RpcSs,0,RpcSsService
++AddService=SamSs,0,SamSsService
+ AddService=scardsvr,0,ScardSvrService
+ AddService=Spooler,0,SpoolerService
+ AddService=StiSvc,0,StiService
+@@ -973,6 +977,14 @@
+ Description="RPC service"
+ DisplayName="Remote Procedure Call (RPC)"
+ ServiceBinary="%11%\rpcss.exe"
++ServiceType=32
++StartType=3
++ErrorControl=1
++
++[SamSsService]
++Description="Security Accounts Manager service"
++DisplayName="Security Accounts Manager"
++ServiceBinary="%11%\lsass.exe"
+ ServiceType=32
+ StartType=3
+ ErrorControl=1
+diff --git a/programs/wineboot/wineboot.c b/programs/wineboot/wineboot.c
+--- a/programs/wineboot/wineboot.c
++++ b/programs/wineboot/wineboot.c
+@@ -1443,6 +1443,62 @@ static int ProcessWindowsFileProtection(void)
+     return 1;
+ }
+ 
++static BOOL wait_for_service_running( SC_HANDLE service )
++{
++    SERVICE_STATUS_PROCESS status;
++    ULONGLONG deadline = GetTickCount64() + 10000;
++    DWORD needed;
++
++    for (;;)
++    {
++        if (!QueryServiceStatusEx( service, SC_STATUS_PROCESS_INFO, (BYTE *)&status,
++                                   sizeof(status), &needed ))
++        {
++            WINE_ERR( "Couldn't query SamSs: error %lu\n", GetLastError() );
++            return FALSE;
++        }
++        if (status.dwCurrentState == SERVICE_RUNNING) return TRUE;
++        if (status.dwCurrentState == SERVICE_STOPPED)
++        {
++            WINE_ERR( "SamSs stopped during startup: service error %lu\n",
++                      status.dwWin32ExitCode );
++            return FALSE;
++        }
++        if (GetTickCount64() >= deadline)
++        {
++            WINE_ERR( "Timed out waiting for SamSs to start\n" );
++            return FALSE;
++        }
++        Sleep( 100 );
++    }
++}
++
++static void start_samss_service(void)
++{
++    SC_HANDLE manager, service;
++    DWORD error;
++
++    if (!(manager = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT )))
++    {
++        WINE_ERR( "Couldn't open the service manager for SamSs: error %lu\n", GetLastError() );
++        return;
++    }
++    if (!(service = OpenServiceW( manager, L"SamSs", SERVICE_START | SERVICE_QUERY_STATUS )))
++    {
++        WINE_ERR( "Couldn't open SamSs: error %lu\n", GetLastError() );
++        CloseServiceHandle( manager );
++        return;
++    }
++
++    if (!StartServiceW( service, 0, NULL ) && (error = GetLastError()) != ERROR_SERVICE_ALREADY_RUNNING)
++        WINE_ERR( "Couldn't start SamSs: error %lu\n", error );
++    else
++        wait_for_service_running( service );
++
++    CloseServiceHandle( service );
++    CloseServiceHandle( manager );
++}
++
+ static BOOL create_native_process( const WCHAR *app, WCHAR *cmdline, BOOL inherit, DWORD flags,
+                                    const WCHAR *curdir, PROCESS_INFORMATION *info )
+ {
+@@ -1936,6 +1992,7 @@ int __cdecl main( int argc, char *argv[] )
+         start_services_process();
+     }
+     if (init || update) update_wineprefix( update );
++    if (init || update || (kill && !restart)) start_samss_service();
+ 
+     create_volatile_environment_registry_key();
+     create_known_dlls();
+-- 
+2.51.2

@@ -1,0 +1,5 @@
+1e811305063d44de0e08de93df007c5c12b1deb11f8d965e4d7240c9dc93ac55  dlls/ntoskrnl.exe/ntoskrnl.c
+1348b493d920be94da20d7291395e0b87c631855a1354258bb885f6d8ffd897e  dlls/ntoskrnl.exe/ntoskrnl_private.h
+63dbbf3348a81c0bf98b5426b667970190c1434b6a9f8c507c78824741b751b2  dlls/ntoskrnl.exe/instr.c
+f201e95192251f8438dd426ed5d01014ba2483e429c8ae6ca4adf51c2000ba58  dlls/ntoskrnl.exe/ntoskrnl.exe.spec
+9d6f0617f5b4576702f5313e4d6c4cb4791efd88128413437e4acb686db566ac  dlls/ntoskrnl.exe/sync.c

@@ -43,7 +43,7 @@ for name in Recovery State Game Launcher Updater Vulkan DirectX11 Apps logs .run
   [ ! -L "$DEST/$name" ] || fail "受保护目录不能是符号链接：$name"
   [ ! -e "$DEST/$name" ] || [ -d "$DEST/$name" ] || fail "受保护目录不是文件夹：$name"
 done
-for name in run.sh common.sh payload-manifest.tsv; do
+for name in run.sh common.sh diagnose.sh payload-manifest.tsv; do
   [ ! -L "$DEST/$name" ] || fail "安装元数据不能是符号链接：$name"
 done
 [ ! -L "$DEST/Launcher/games" ] || fail '官方启动器 games 目录不能是符号链接。'
@@ -65,14 +65,21 @@ archive="$RES/$archive_name"
   $0!="Recovery" && $0!="Recovery/" && index($0,"Recovery/")!=1 {bad=1}
   /^Recovery\/(local|prefix|State|Game|Launcher)(\/|$)/ {bad=1}
   END {exit bad}' || fail '资源目录结构不正确。'
-source_state=''
+source_state=''; source_state_label='fresh'
 for state in "$DEST/State" "$DEST/Updater/local" "$DEST/DirectX11/local" "$DEST/Vulkan/local"; do
   if [ -f "$state/prefix/system.reg" ]; then
     [ ! -L "$state" ] && [ ! -L "$state/prefix" ] || fail '旧 Wine 环境不能是符号链接。'
     for part in drive_c drive_c/windows drive_c/windows/system32 dosdevices system.reg user.reg userdef.reg; do
       [ ! -L "$state/prefix/$part" ] || fail "旧 Wine 系统路径不能是符号链接：$part"
     done
-    source_state="$state"; break
+    source_state="$state"
+    case "$state" in
+      "$DEST/State") source_state_label='State';;
+      "$DEST/Updater/local") source_state_label='Updater/local';;
+      "$DEST/DirectX11/local") source_state_label='DirectX11/local';;
+      "$DEST/Vulkan/local") source_state_label='Vulkan/local';;
+    esac
+    break
   fi
 done
 required_kb=$(( $(/usr/bin/stat -f %z "$archive") / 1024 * 4 + 1048576 ))
@@ -201,13 +208,43 @@ fi
 stage='准备 Wine 用户环境'; detail_log=''
 echo '正在准备统一 Wine 环境；已有游戏和旧环境保持保留……'
 if [ -n "$source_state" ]; then
+  for metadata in installed-version migration-source; do
+    [ ! -L "$source_state/$metadata" ] || fail "旧 Wine 元数据不能是符号链接：$metadata"
+    [ ! -e "$source_state/$metadata" ] || [ -f "$source_state/$metadata" ] || fail "旧 Wine 元数据不是普通文件：$metadata"
+  done
   /usr/bin/ditto "$source_state" "$work/new/State"
 else
   mkdir -p "$work/new/State/prefix"
 fi
+for metadata in installed-version migration-source; do
+  [ ! -L "$work/new/State/$metadata" ] || fail "准备后的 Wine 元数据不能是符号链接：$metadata"
+  [ ! -e "$work/new/State/$metadata" ] || [ -f "$work/new/State/$metadata" ] || fail "准备后的 Wine 元数据不是普通文件：$metadata"
+done
 PREFIX="$work/new/State/prefix"
 WINE_ROOT="$RECOVERY/runtime/Wine Devel.app/Contents/Resources/wine"
 SESSION="$work/session"; mkdir -p "$SESSION/capture" "$PREFIX/drive_c"
+
+# MoltenVK and argument-buffer fixes change cached shader/pipeline semantics.
+# Remove only Endfield's known Vulkan PSO file once when changing runtime
+# versions. The transaction copy keeps the original cache intact on failure.
+previous_version=''
+if [ -f "$work/new/State/installed-version" ]; then
+  previous_version="$(/usr/bin/head -n 1 "$work/new/State/installed-version")"
+fi
+if [ "$previous_version" != "$version" ] && [ -d "$PREFIX/drive_c/users" ]; then
+  cleared_pso=0
+  while IFS= read -r -d '' cache; do
+    case "$cache" in
+      "$PREFIX"/drive_c/users/*/AppData/LocalLow/Hypergryph/Endfield/vulkan_pso_cache.bin|\
+      "$PREFIX"/drive_c/users/*/AppData/LocalLow/Gryphline/Endfield/vulkan_pso_cache.bin)
+        rm -f -- "$cache"
+        cleared_pso=$((cleared_pso + 1))
+        ;;
+    esac
+  done < <(/usr/bin/find "$PREFIX/drive_c/users" -type f -name vulkan_pso_cache.bin -print0)
+  [ "$cleared_pso" = 0 ] || echo "已清理 ${cleared_pso} 个旧版 Vulkan 管线缓存。"
+fi
+
 mkdir -p "$PREFIX/dosdevices"
 if [ -L "$PREFIX/dosdevices/c:" ]; then rm "$PREFIX/dosdevices/c:"
 elif [ -e "$PREFIX/dosdevices/c:" ]; then fail 'Wine C: 映射位置已有实体目录。'; fi
@@ -223,15 +260,30 @@ load_environment
 stage='初始化 Wine 环境'; detail_log="$DEST/logs/installer-prefix.log"
 : >"$detail_log"
 wine_started=1
+# An upgraded prefix can contain the previous builtin PE. Seed the two ACE
+# service components before running wineboot so this update itself uses the new
+# SCM startup path, then copy all paired components again after initialization.
+mkdir -p "$PREFIX/drive_c/windows/system32"
+for dll in wineboot.exe lsass.exe; do
+  rm -f "$PREFIX/drive_c/windows/system32/$dll"
+  cp "$WINE_ROOT/lib/wine/x86_64-windows/$dll" "$PREFIX/drive_c/windows/system32/$dll"
+done
 # These optional .NET/HTML add-ons are not needed by the Qt launcher or Unity.
 # Suppress their interactive first-prefix downloads only during initialization;
 # run.sh still loads the exact frozen game profile without these overrides.
 WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree,mshtml=" "$WINE_ROOT/bin/wine" wineboot.exe -u >>"$DEST/logs/installer-prefix.log" 2>&1
+samss_query="$work/samss-query.log"
+if ! "$WINE_ROOT/bin/wine" sc.exe query SamSs >"$samss_query" 2>&1; then
+  cat "$samss_query" >>"$DEST/logs/installer-prefix.log"
+  fail 'SamSs 服务查询失败。'
+fi
+cat "$samss_query" >>"$DEST/logs/installer-prefix.log"
+LC_ALL=C /usr/bin/tr -d '\r' <"$samss_query" | /usr/bin/grep -Eq 'STATE[[:space:]]*:[[:space:]]*4([[:space:]]|$)' || fail 'SamSs 服务未进入运行状态。'
 "$WINE_ROOT/bin/wineserver" -w >>"$DEST/logs/installer-prefix.log" 2>&1
 # These builtin PE files must match the frozen Unix side, including on upgrades.
 stage='配对 Wine 系统组件'; detail_log=''
 mkdir -p "$PREFIX/drive_c/windows/system32"
-for dll in ntoskrnl.exe d3d11.dll dxgi.dll winemetal.dll; do
+for dll in ntoskrnl.exe wineboot.exe kernel32.dll lsass.exe sechost.dll secur32.dll msv1_0.dll d3d11.dll dxgi.dll winemetal.dll; do
   rm -f "$PREFIX/drive_c/windows/system32/$dll"
   cp "$WINE_ROOT/lib/wine/x86_64-windows/$dll" "$PREFIX/drive_c/windows/system32/$dll"
 done
@@ -256,7 +308,7 @@ stage='注册官方启动器协议'
 assert_idle
 wine_started=0
 stage='核验 Wine 环境与相对路径'; detail_log=''
-for dll in ntoskrnl.exe d3d11.dll dxgi.dll winemetal.dll; do
+for dll in ntoskrnl.exe wineboot.exe kernel32.dll lsass.exe sechost.dll secur32.dll msv1_0.dll d3d11.dll dxgi.dll winemetal.dll; do
   /usr/bin/cmp -s "$WINE_ROOT/lib/wine/x86_64-windows/$dll" "$PREFIX/drive_c/windows/system32/$dll" || fail "Wine 环境配对失败：$dll"
 done
 rm "$PREFIX/drive_c/Endfield" "$PREFIX/drive_c/Hypergryph Launcher"
@@ -269,31 +321,42 @@ ln -s '../drive_c' "$PREFIX/dosdevices/c:"
 while IFS= read -r -d '' link; do
   case "$(readlink "$link")" in "$work"/*) fail "Wine 环境留下临时路径映射：$link";; esac
 done < <(/usr/bin/find "$work/new/State" -type l -print0)
+rm -f "$work/new/State/installed-version" "$work/new/State/migration-source"
 printf '%s\n' "$version" >"$work/new/State/installed-version"
+printf '%s\n' "$source_state_label" >"$work/new/State/migration-source"
 
 stage='创建与签名应用入口'
-cp "$RES/run.sh" "$RES/common.sh" "$manifest" "$work/new/"
+cp "$RES/run.sh" "$RES/common.sh" "$RES/diagnose.sh" "$manifest" "$work/new/"
 mkdir "$work/new/Apps"
 [ ! -d "$DEST/Apps" ] || /usr/bin/ditto "$DEST/Apps" "$work/new/Apps"
-app_names=('终末地')
+app_names=('终末地' '终末地兼容诊断')
 for name in '终末地 Vulkan' '终末地 DX11' '终末地 更新与修复'; do
   [ ! -d "$DEST/Apps/$name.app" ] || app_names+=("$name")
 done
 for name in "${app_names[@]}"; do
   app="$work/new/Apps/$name.app"
+  launch_mode='Launcher'; bundle_id='io.wineendfield.installed.Launcher'
+  if [ "$name" = '终末地兼容诊断' ]; then
+    launch_mode='Diagnose'; bundle_id='io.wineendfield.installed.Diagnose'
+    if [ -e "$app" ] || [ -L "$app" ]; then
+      [ -d "$app" ] && [ ! -L "$app" ] || fail '已有同名诊断入口不是本安装器创建的应用，不会覆盖。'
+      id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null || true)"
+      [ "$id" = "$bundle_id" ] || fail '已有同名诊断应用不属于本安装器，不会覆盖。'
+    fi
+  fi
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS"
   cp "$RES/../MacOS/EndfieldInstaller" "$app/Contents/MacOS/EndfieldInstaller"
   plist="$app/Contents/Info.plist"
   /usr/bin/plutil -create xml1 "$plist"
   /usr/bin/plutil -insert CFBundleExecutable -string EndfieldInstaller "$plist"
-  /usr/bin/plutil -insert CFBundleIdentifier -string io.wineendfield.installed.Launcher "$plist"
+  /usr/bin/plutil -insert CFBundleIdentifier -string "$bundle_id" "$plist"
   /usr/bin/plutil -insert CFBundleName -string "$name" "$plist"
   /usr/bin/plutil -insert CFBundlePackageType -string APPL "$plist"
   /usr/bin/plutil -insert CFBundleShortVersionString -string "${version#v}" "$plist"
   /usr/bin/plutil -insert LSMinimumSystemVersion -string 26.0 "$plist"
   /usr/bin/plutil -insert InstallRoot -string "$DEST" "$plist"
-  /usr/bin/plutil -insert LaunchMode -string Launcher "$plist"
+  /usr/bin/plutil -insert LaunchMode -string "$launch_mode" "$plist"
   /usr/bin/codesign --force --sign - "$app"
   /usr/bin/codesign --verify --strict "$app"
 done
@@ -301,7 +364,7 @@ done
 assert_idle
 # Commit only after all extraction, Wine initialization and signing succeeded.
 stage='切换到新版本'
-for name in Recovery State run.sh common.sh payload-manifest.tsv Apps Launcher; do
+for name in Recovery State run.sh common.sh diagnose.sh payload-manifest.tsv Apps Launcher; do
   [ -e "$work/new/$name" ] || continue
   if [ -e "$DEST/$name" ]; then mv "$DEST/$name" "$work/backup/$name"; fi
   touched+=("$name")

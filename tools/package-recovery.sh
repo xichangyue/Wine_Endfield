@@ -4,7 +4,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FROZEN="${1:?提供固定版目录（含 runtime、environment.json 和 version.json）}"
 OUT="${2:?提供新的输出目录}"
-VERSION="${3:-v0.4.1-preview}"
+VERSION="${3:-v0.4.2-preview}"
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || { echo '版本号格式无效' >&2; exit 2; }
 FROZEN="$(cd "$FROZEN" && pwd)"
 mkdir -p "$OUT"
@@ -17,9 +17,10 @@ PAYLOAD="$STAGE/Recovery"
 mkdir -p "$PAYLOAD/runtime" "$PAYLOAD/bin" "$PAYLOAD/licenses"
 
 # Verify the entire frozen app, including links, before copying it to the package.
-python3 - "$FROZEN" <<'PY'
-import hashlib, json, pathlib, sys
+python3 - "$FROZEN" "$VERSION" <<'PY'
+import hashlib, json, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
+requested_version = sys.argv[2]
 app = root / 'runtime/Wine Devel.app'
 assert app.is_dir() and not app.is_symlink(), 'Missing physical frozen Wine app'
 records = {r['path']: r for r in json.loads((root / 'runtime-manifest.json').read_text())['files']
@@ -39,6 +40,9 @@ for p in app.rglob('*'):
     seen.add(relative)
 assert seen == set(records), 'Frozen runtime inventory mismatch'
 version = json.loads((root / 'version.json').read_text())
+frozen_package_version = 'v' + re.sub(r'-[0-9]{8}$', '', version['version'])
+assert requested_version == frozen_package_version, \
+    f'Package version mismatch: requested {requested_version}, frozen {frozen_package_version}'
 for relative, digest in version['pins'].items():
     p = root / version['runtime_relative'] / relative
     assert hashlib.sha256(p.read_bytes()).hexdigest() == digest, f'Pin mismatch: {relative}'
@@ -53,8 +57,8 @@ cp "$REPO/Vulkan/bin/7zz" "$PAYLOAD/bin/7zz"
 cp "$FROZEN/version.json" "$PAYLOAD/version.json"
 cp "$REPO/DirectX11/fonts.reg" "$PAYLOAD/fonts.reg"
 cp "$REPO/LICENSE" "$PAYLOAD/licenses/Installer-MIT.txt"
-cat > "$PAYLOAD/PACKAGE-NOTICE.txt" <<'EOF'
-Endfield Mac recovery runtime — v0.4.1-preview
+cat > "$PAYLOAD/PACKAGE-NOTICE.txt" <<EOF
+Endfield Mac recovery runtime — $VERSION
 
 This package contains the locally verified Wine compatibility runtime and the
 unmodified 7-Zip utility. It contains no game, official launcher, Wine prefix,
@@ -66,23 +70,17 @@ retains MIT and its dependencies' licenses. 7-Zip retains its upstream LGPL,
 BSD and unRAR terms. See licenses/ and the original upstream distributions.
 
 Corresponding source is provided with this release:
-  Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz
-  MoltenVK-1.4.2-Endfield-v0.3.0-source.tar.xz
+  Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz
+  MoltenVK-1.4.2-Endfield-v0.4.2-private.1-source.tar.xz
   dxmt-v0.80-source.tar.gz
   7z2603-src.tar.xz
 
-https://github.com/xichangyue/Wine_Endfield/releases/tag/v0.4.1-preview
-
-This release disables Metal capture support in the default environment. Runtime
-binaries are unchanged from v0.4.0-preview, so the corresponding source archives
-retain their existing names and contents.
-
-The Wine source archive contains the complete modified source, module-specific
-source variants, build instructions and provenance. The earlier v0.3 Wine
-patches do not describe all binaries in this release. MoltenVK is unchanged
-from the project's v0.3 release; DXMT and 7-Zip retain their upstream bytes.
-Additional upstream dependencies, sources and license terms are documented in
-the repository's THIRD_PARTY.md and Recovery/source/ provenance records.
+The Wine source archive contains the complete source union, module variants,
+the ACE runtime, IPI-contract and service-host containment patches, build instructions and provenance. The MoltenVK archive
+contains the modified 1.4.2 source and fixed dependency sources. DXMT and 7-Zip
+retain their upstream bytes. Additional sources and license terms are documented
+in THIRD_PARTY.md and the provenance records in the corresponding source
+attachments.
 EOF
 
 python3 - "$FROZEN" "$PAYLOAD" <<'PY'
@@ -122,10 +120,15 @@ PY
 (cd "$PAYLOAD/runtime" && shasum -a 256 -c ../RUNTIME-SHA256.txt > /dev/null)
 bash -n "$PAYLOAD/environment.sh"
 PARTIAL="$STAGE/payload.tar.xz"
+ENTRY_LIST="$STAGE/payload-entries.txt"
+(cd "$STAGE" && LC_ALL=C find -P Recovery -print | LC_ALL=C sort > "$ENTRY_LIST")
+tar_flags=(-c -n --uid 0 --gid 0 --uname root --gname wheel
+  --no-xattrs --no-acls --no-fflags --no-mac-metadata)
 if command -v xz >/dev/null 2>&1; then
-  COPYFILE_DISABLE=1 /usr/bin/tar -cf - -C "$STAGE" Recovery | xz -T2 -3 > "$PARTIAL"
+  COPYFILE_DISABLE=1 /usr/bin/tar "${tar_flags[@]}" -f - -C "$STAGE" -T "$ENTRY_LIST" |
+    xz -T2 -3 > "$PARTIAL"
 else
-  COPYFILE_DISABLE=1 /usr/bin/tar -cJf "$PARTIAL" -C "$STAGE" Recovery
+  COPYFILE_DISABLE=1 /usr/bin/tar "${tar_flags[@]}" -J -f "$PARTIAL" -C "$STAGE" -T "$ENTRY_LIST"
 fi
 # Stage and rename only after archive creation succeeds, so a failed build is retryable.
 mv "$PARTIAL" "$TARGET"

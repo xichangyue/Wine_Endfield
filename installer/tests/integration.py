@@ -19,6 +19,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
+import zipfile
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -42,6 +43,10 @@ fi
 case "${1:-}" in
   wineboot|wineboot.exe)
     [ "${2:-}" = -u ] || exit 91
+    ;;
+  sc|sc.exe)
+    [ "${2:-}" = query ] && [ "${3:-}" = SamSs ] || exit 95
+    printf 'SERVICE_NAME: SamSs\r\n        STATE              : 4  RUNNING\r\n'
     ;;
   reg|reg.exe)
     [ "${2:-}" = import ] && [ -f "${3:-}" ] || exit 92
@@ -101,8 +106,9 @@ class Suite:
         self.payload = work / "payload"
         self.exe = work / "Synthetic Official.exe"
         self.source_hashes = {name: digest(REPO / name) for name in [
-            "installer/setup.sh", "installer/common.sh", "installer/cleanup.sh", "installer/run.sh", "installer/Installer.swift",
+            "installer/setup.sh", "installer/common.sh", "installer/cleanup.sh", "installer/run.sh", "installer/diagnose.sh", "installer/Installer.swift",
             "installer/test-installation.sh", "installer/tests/integration.py", "tools/build-installer.sh",
+            "tools/终末地ACE诊断.command",
         ]}
 
     def command(self, label: str, args: list[str | Path], success: bool = True, **kwargs):
@@ -135,6 +141,9 @@ class Suite:
             for p in sorted(runtime.rglob("*")) if p.is_file() and not p.is_symlink()))
         wine = runtime / "Wine Devel.app/Contents/Resources/wine"
         core = ["bin/wine", "bin/wineserver", "lib/wine/x86_64-windows/ntoskrnl.exe",
+                "lib/wine/x86_64-windows/wineboot.exe", "lib/wine/x86_64-windows/kernel32.dll",
+                "lib/wine/x86_64-windows/lsass.exe", "lib/wine/x86_64-windows/sechost.dll",
+                "lib/wine/x86_64-windows/secur32.dll", "lib/wine/x86_64-windows/msv1_0.dll",
                 "lib/wine/x86_64-windows/d3d11.dll", "lib/wine/x86_64-windows/dxgi.dll",
                 "lib/wine/x86_64-windows/winemetal.dll"]
         write(tree / "CORE-SHA256.txt", "".join(f"{digest(wine / p)}  ./{p}\n" for p in core))
@@ -146,7 +155,8 @@ class Suite:
         wine = self.tree / "runtime/Wine Devel.app/Contents/Resources/wine"
         for name in ["wine", "wine64", "wineboot", "wineserver"]:
             write(wine / "bin" / name, FAKE_WINE, executable=True)
-        for name in ["ntoskrnl.exe", "d3d11.dll", "dxgi.dll", "winemetal.dll"]:
+        for name in ["ntoskrnl.exe", "wineboot.exe", "kernel32.dll", "lsass.exe", "sechost.dll",
+                     "secur32.dll", "msv1_0.dll", "d3d11.dll", "dxgi.dll", "winemetal.dll"]:
             write(wine / "lib/wine/x86_64-windows" / name, "synthetic PE: " + name + "\n")
         write(self.tree / "environment.sh", "#!/bin/bash\nexport WINEDEBUG=-all\n"
               f"export WINEDLLOVERRIDES='{FROZEN_DLL_OVERRIDE}'\n")
@@ -204,6 +214,12 @@ class Suite:
             write(state / "prefix/drive_c/users/synthetic/settings.bin", "settings from " + mode)
             write(state / "prefix/drive_c/users/synthetic/AppData/LocalLow/Hypergryph/Endfield/settings.json",
                   '{"ordinary_user_settings":true,"source":"' + mode + '"}\n')
+            write(state / "prefix/drive_c/users/synthetic/AppData/LocalLow/Hypergryph/Endfield/vulkan_pso_cache.bin",
+                  "stale Hypergryph MoltenVK pipeline cache\n")
+            write(state / "prefix/drive_c/users/synthetic/AppData/LocalLow/Gryphline/Endfield/vulkan_pso_cache.bin",
+                  "stale Gryphline MoltenVK pipeline cache\n")
+            write(state / "prefix/drive_c/users/synthetic/AppData/LocalLow/Hypergryph/Endfield/keep-cache.bin",
+                  "ordinary user cache must remain\n")
             (state / "prefix/dosdevices").mkdir()
             (state / "prefix/dosdevices/c:").symlink_to("../drive_c", target_is_directory=True)
             (state / "prefix/drive_c/Endfield").symlink_to(dest / "Game", target_is_directory=True)
@@ -265,6 +281,90 @@ class Suite:
         fresh = self.work / "external volume 中文 & space's $ [1]" / "Wine Endfield"
         self.setup("fresh-special-path", fresh, exe=self.exe)
         self.assert_portable(fresh, "fresh-installed-check")
+        assert (fresh / "State/migration-source").read_text().strip() == "fresh"
+        assert plistlib.loads((fresh / "Apps/终末地兼容诊断.app/Contents/Info.plist").read_bytes())["LaunchMode"] == "Diagnose"
+        write(fresh / "Game/AntiCheatExpert/ACE-CORE.sys", b"synthetic ACE core\x00\xff")
+        write(fresh / "State/prefix/drive_c/Program Files/AntiCheatExpert/ACE-Service64.exe",
+              b"synthetic ACE service\x00\xff")
+        write(fresh / "State/prefix/drive_c/windows/system32/drivers/ACE-BASE.sys",
+              b"synthetic ACE driver\x00\xff")
+        write(fresh / "Game/Endfield.exe", b"synthetic Endfield executable")
+        write(fresh / "Game/EndfieldBase.dll", b"synthetic Endfield base")
+        write(fresh / "Game/verify_files.json", '{"build":"synthetic"}\n')
+        with (fresh / "State/prefix/system.reg").open("a") as registry:
+            registry.write(r'''
+[System\\CurrentControlSet\\Services\\ACE-CORE-SYNTHETIC]
+"DisplayName"="Synthetic ACE"
+"ImagePath"="Z:\\Users\\private-user\\secret\\ACE-CORE.sys"
+"Group"="SyntheticKernelGroup"
+"ObjectName"="private-service-account"
+"Type"=dword:00000001
+"Start"=dword:00000003
+''')
+        write(fresh / "State/prefix/drive_c/users/synthetic/account-token.txt",
+              "PRIVATE_TOKEN_SHOULD_NOT_APPEAR")
+        failed_session = fresh / "logs/session-20990101-000000.test"
+        write(failed_session / "run.log",
+              f"err:ntoskrnl:DriverInit ACE-CORE root={fresh} home={Path.home()}\n"
+              r"err:ntoskrnl:DriverInit ACE-CORE host=Z:\Users\private-user\secret\ACE-CORE.sys" "\n"
+              r"err:ntoskrnl:DriverInit ACE-CORE profile=C:\Users\private-c-user\AppData\Local\ACE" "\n"
+              "err:ntoskrnl:DriverInit ACE-CORE code=1-1720-1000015145 token=PRIVATE_TOKEN_SHOULD_NOT_APPEAR\n"
+              "err:ntoskrnl:DriverInit ACE-CORE Authorization: Bearer PRIVATE_BEARER_SHOULD_NOT_APPEAR\n")
+        write(failed_session / "result.json", '{"app_exit": 1, "server_exit": 0, "forced_cleanup": false}\n')
+        clean_session = fresh / "logs/session-20990102-000000.test"
+        write(clean_session / "run.log", "err:ntoskrnl:ACE-CORE clean retry without popup\n")
+        write(clean_session / "result.json", '{"app_exit": 0, "server_exit": 0, "forced_cleanup": false}\n')
+        os.utime(failed_session / "run.log", (100, 100))
+        os.utime(clean_session / "run.log", (200, 200))
+        for index, mtime in enumerate((300, 400, 500), 3):
+            filler = fresh / f"logs/session-2099010{index}-000000.test"
+            write(filler / "run.log", f"err:ntoskrnl:ACE-CORE retained filler {index}\n")
+            os.utime(filler / "run.log", (mtime, mtime))
+        excluded = fresh / "logs/session-20981231-000000.test"
+        write(excluded / "run.log", "err:ntoskrnl:ACE-CORE SIXTH_SESSION_MUST_BE_EXCLUDED\n")
+        os.utime(excluded / "run.log", (50, 50))
+        external_session = self.work / "external-private-session"
+        write(external_session / "run.log", "err:ntoskrnl:ACE-CORE EXTERNAL_SESSION_MUST_NOT_BE_READ\n")
+        (fresh / "logs/session-20991231-000000.link").symlink_to(external_session, target_is_directory=True)
+        old_bundles = set((fresh / "logs").glob("support-*.zip"))
+        self.command("privacy-safe-diagnostic-bundle", ["/bin/bash", fresh / "diagnose.sh"])
+        bundles = set((fresh / "logs").glob("support-*.zip")) - old_bundles
+        assert len(bundles) == 1, bundles
+        with zipfile.ZipFile(bundles.pop()) as support:
+            files = {name: support.read(name) for name in support.namelist() if not name.endswith("/")}
+        assert not any(Path(name).name.startswith("._") for name in files)
+        contents = b"\n".join(files.values())
+        assert b"PRIVATE_TOKEN_SHOULD_NOT_APPEAR" not in contents
+        assert b"PRIVATE_BEARER_SHOULD_NOT_APPEAR" not in contents
+        assert b"<SECRET_FIELDS_REDACTED>" in contents
+        assert b"private-user" not in contents
+        assert b"private-c-user" not in contents
+        assert b"private-service-account" not in contents
+        assert str(fresh).encode() not in contents and str(Path.home()).encode() not in contents
+        assert b"<INSTALL_ROOT>" in contents and b"<HOME>" in contents
+        assert b"ACE-CORE.sys" in contents and b"ACE-CORE-SYNTHETIC" in contents
+        assert b"1-1720-1000015145" in contents, "earlier failed session was hidden by a clean retry"
+        assert b"result_app_exit=1" in contents and b"result_app_exit=0" in contents
+        assert b"Game/Endfield.exe" in contents and b"Game/EndfieldBase.dll" in contents
+        assert b"Game/verify_files.json" in contents
+        assert b"service_dynamic_status=not_collected_offline" in contents
+        assert b"SyntheticKernelGroup" in contents and b"<ACCOUNT_REDACTED>" in contents
+        assert b"SIXTH_SESSION_MUST_BE_EXCLUDED" not in contents
+        assert b"EXTERNAL_SESSION_MUST_NOT_BE_READ" not in contents
+        assert b"<HOST_PATH_REDACTED>" in contents
+        assert not any("account-token" in name for name in files)
+        standalone = self.work / "standalone-diagnostic"
+        standalone.mkdir()
+        shutil.copy2(REPO / "installer/diagnose.sh", standalone / "diagnose.sh")
+        shutil.copy2(REPO / "tools/终末地ACE诊断.command", standalone / "终末地ACE诊断.command")
+        old_bundles = set((fresh / "logs").glob("support-*.zip"))
+        standalone_result = self.command(
+            "standalone-diagnostic-before-update",
+            [standalone / "终末地ACE诊断.command", fresh],
+            env={**os.environ, "ENDFIELD_DIAGNOSTIC_NO_REVEAL": "1"},
+        )
+        assert "DIAGNOSTIC_ZIP=" in standalone_result.stdout
+        assert len(set((fresh / "logs").glob("support-*.zip")) - old_bundles) == 1
         initial_environment = self.environment_calls(fresh / "State/prefix")
         boots = [row for row in initial_environment if row[1] == "wineboot.exe"]
         assert len(boots) == 1, initial_environment
@@ -281,7 +381,12 @@ class Suite:
             self.setup("upgrade-" + version, dest)
             assert snapshot(dest / "Game") == game
             self.assert_legacy_cleaned(dest)
+            assert (dest / "State/migration-source").read_text().strip() == "Updater/local"
             assert (dest / "State/prefix/drive_c/users/synthetic/settings.bin").read_text() == "settings from Updater"
+            locallow = dest / "State/prefix/drive_c/users/synthetic/AppData/LocalLow"
+            assert not (locallow / "Hypergryph/Endfield/vulkan_pso_cache.bin").exists()
+            assert not (locallow / "Gryphline/Endfield/vulkan_pso_cache.bin").exists()
+            assert (locallow / "Hypergryph/Endfield/keep-cache.bin").read_text() == "ordinary user cache must remain\n"
             assert (dest / "Apps/Unrelated User.app/Contents/keep").read_text() == "do not replace user apps"
             assert (dest / "Launcher/local-settings.json").read_text().startswith('{"render_mode":"vk"')
             self.assert_portable(dest, "structure-" + version)
@@ -304,8 +409,12 @@ class Suite:
 
         dest = self.work / "upgrade-v0.3.0-preview"
         write(dest / "State/cache/new-user-settings", "retain unified state on reinstall")
+        same_version_pso = dest / "State/prefix/drive_c/users/synthetic/AppData/LocalLow/Hypergryph/Endfield/vulkan_pso_cache.bin"
+        write(same_version_pso, "current-version cache stays on repair\n")
         self.setup("same-version-reinstall", dest)
+        assert (dest / "State/migration-source").read_text().strip() == "State"
         assert (dest / "State/cache/new-user-settings").read_text() == "retain unified state on reinstall"
+        assert same_version_pso.read_text() == "current-version cache stays on repair\n"
         assert not list((dest / ".runtime-backups").glob("*/State/prefix")), "successful installation retained superseded state backup"
         assert not list((dest / ".runtime-backups").glob("*/State/cache")), "successful installation retained superseded state cache"
         assert not list((dest / ".runtime-backups").glob("*/Recovery/runtime")), "successful installation retained superseded runtime backup"
@@ -315,6 +424,7 @@ class Suite:
         fallback = self.work / "legacy-without-updater"
         self.legacy(fallback, updater=False)
         self.setup("migration-falls-back-to-dx11-state", fallback)
+        assert (fallback / "State/migration-source").read_text().strip() == "DirectX11/local"
         assert (fallback / "State/prefix/drive_c/users/synthetic/settings.bin").read_text() == "settings from DirectX11"
         self.assert_legacy_cleaned(fallback)
 
@@ -329,7 +439,7 @@ class Suite:
         self.assert_legacy_cleaned(relocated_legacy)
         assert snapshot(relocated_legacy / "Game") == old_game
 
-        tracked = ["Recovery", "State", "Apps", "run.sh", "common.sh", "payload-manifest.tsv", "Game"]
+        tracked = ["Recovery", "State", "Apps", "run.sh", "common.sh", "diagnose.sh", "payload-manifest.tsv", "Game"]
         before = {name: snapshot(dest / name) for name in tracked}
         failres = self.variant("failure-app", fail_prepare=True)
         failed = self.setup("failed-upgrade-rolls-back", dest, success=False, res=failres)
@@ -492,6 +602,19 @@ rm() {
         external_before = snapshot(external_games)
         self.setup("external-launcher-games-directory-rejected", linked_games, success=False)
         assert snapshot(external_games) == external_before, "installer followed the launcher games symlink"
+
+        for metadata in ["installed-version", "migration-source"]:
+            linked_metadata = self.work / (metadata + "-is-link")
+            shutil.copytree(dest, linked_metadata, symlinks=True)
+            external_metadata = self.work / ("external-" + metadata)
+            write(external_metadata, "external metadata sentinel\n")
+            metadata_path = linked_metadata / "State" / metadata
+            metadata_path.unlink()
+            metadata_path.symlink_to(external_metadata)
+            self.setup("external-state-" + metadata + "-rejected",
+                       linked_metadata, success=False)
+            assert metadata_path.is_symlink()
+            assert external_metadata.read_text() == "external metadata sentinel\n"
 
         server = self.work / "wineserver"
         # Copying a platform-signed /bin/sleep can be killed by macOS; use our

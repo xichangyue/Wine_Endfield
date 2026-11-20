@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "name": "ACE IPI, DPC, IRQL and CR8 contract compatibility",
+  "patch": "ace-ipi-contract.patch",
+  "patch_sha256": "2c980623d8b18d4dac4ca6c38fe5db6f6e6987f1b9108de8c096c84f1fbda87e",
+  "base": "post ace-core-runtime.patch",
+  "files": [
+    {
+      "path": "dlls/ntoskrnl.exe/ntoskrnl.c",
+      "before_sha256": "a16794c5fdaaa7b82fbd6d7808cd78ed0671de7a5586f2f1d7fc5cbf5c8b670a",
+      "after_sha256": "1e811305063d44de0e08de93df007c5c12b1deb11f8d965e4d7240c9dc93ac55"
+    },
+    {
+      "path": "dlls/ntoskrnl.exe/ntoskrnl_private.h",
+      "before_sha256": "711bc759e3a3caf967f4b2428d6e1a1d9fe1f7a9399c40e26e71f4757f8c3964",
+      "after_sha256": "1348b493d920be94da20d7291395e0b87c631855a1354258bb885f6d8ffd897e"
+    },
+    {
+      "path": "dlls/ntoskrnl.exe/instr.c",
+      "before_sha256": "c6d3887013ef3f78195073ed02c6deb1254fa72172583b0c2bc253d7efa77005",
+      "after_sha256": "63dbbf3348a81c0bf98b5426b667970190c1434b6a9f8c507c78824741b751b2"
+    },
+    {
+      "path": "dlls/ntoskrnl.exe/ntoskrnl.exe.spec",
+      "before_sha256": "0f1a525124833a82808418910cbdf5f9b7f2553db664d13db82639a24f5a0e6b",
+      "after_sha256": "f201e95192251f8438dd426ed5d01014ba2483e429c8ae6ca4adf51c2000ba58"
+    },
+    {
+      "path": "dlls/ntoskrnl.exe/sync.c",
+      "before_sha256": "c3ec14e5bd08401e9e062e876b7423021cc6d620e2b4a762632cf9b618ee15dd",
+      "after_sha256": "9d6f0617f5b4576702f5313e4d6c4cb4791efd88128413437e4acb686db566ac"
+    }
+  ],
+  "validation": "passed"
+}

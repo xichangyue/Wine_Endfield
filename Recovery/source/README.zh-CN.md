@@ -1,16 +1,20 @@
-# v0.4.0 修复运行库的 Wine 源码
+# v0.4.2-preview 运行库的 Wine 源码
 
-本目录记录新版统一运行库的 Wine 变更。**不要使用 v0.3 的 `Vulkan/source/wine-11.16.patch` 或旧 DirectX11 补丁重建新版。** 从同一 Release 下载 `Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz`；其中包含完整 Wine 源码、许可证、逐文件校验、聚合补丁、各模块对应的历史源码变体以及构建脚本。
+本目录记录新版统一运行库的 Wine 变更。**不要使用 v0.3 的 `Vulkan/source/wine-11.16.patch` 或旧 DirectX11 补丁重建新版。** 对应源码附件保留最终候选名称 `Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz`；其中包含完整 Wine 源码、许可证、逐文件校验、聚合补丁、ACE 运行补丁、IPI/IRQL 契约补丁、Tace 服务宿主收敛补丁、各模块对应的历史源码变体以及构建脚本。附件 SHA-256 随 Release 提供。
 
 运行库是逐模块验证后冻结的组合，并非在最后一棵源码上一次构建的结果。源码包的 `wine/` 是所有已采用修改的完整源码集合；`variants/` 将它恢复到各模块实际使用的完整源码树。每个变体均与保留的历史源码逐文件核对，避免共享头文件和未采用的实验修改混入构建。
 
 | 模块 | 构建时使用的源码变体 | 主要内容 |
 | --- | --- | --- |
-| `ntoskrnl.exe` | `ntoskrnl` | 内核兼容修复、MDL 映射、线程上下文 thunk |
+| `ntoskrnl.exe`（v0.4.1 已发布版） | `ntoskrnl` | 内核兼容修复、MDL 映射、线程上下文 thunk |
+| `ntoskrnl.exe`（ACE 三接口候选） | `ntoskrnl` 后应用 `compat/ace-core-three-imports.patch` | 在已发布版上增加 `KeIpiGenericCall`、`KeSetSystemGroupAffinityThread`、`KeRevertToUserGroupAffinityThread` |
+| `ntoskrnl.exe` / `wineboot.exe` / `wine.inf`（v0.4.2-private.1） | `ntoskrnl` 后应用 `compat/ace-core-runtime.patch` | 再增加 `MmCopyMemory`，注册并通过 SCM 启动 `SamSs` |
+| `ntoskrnl.exe`（v0.4.2-private.2） | 在上述运行版后应用 `compat/ace-ipi-contract.patch` | 按活动处理器执行 IPI/DPC，保持处理器身份与 IRQL/CR8 一致，并完成 DPC 异常、锁和 TLS 收尾 |
+| `ntoskrnl.exe`（v0.4.2-private.3） | 在 private.2 后应用 `compat/ace-tace-service-host.patch` | 仅将无参数 `0x65636154` 收敛到触发它的 ACE 系统线程，保留驱动服务宿主；其他 bugcheck 仍保持原行为 |
 | Unix `ntdll.so` | `ntdll` | MSync、映射语义、单 REX NOP 与上下文处理 |
 | `wineserver` | `wineserver` | MSync 及 `SEC_IMAGE_NO_EXECUTE` 服务端映射 |
 | `winemac.so` / `kernel32.dll` | `desktop` | DXMT 窗口桥接及已采用的基础模块修改 |
-| `lsass.exe`、`secur32.dll/.so`、`msv1_0.dll/.so` | `auth` | 真正的 LSA/RPC 认证实现回移及生命周期修复 |
+| `lsass.exe`、`secur32.dll/.so`、`msv1_0.dll/.so`、`sechost.dll` | `auth` | 真正的 LSA/RPC 认证实现回移及生命周期修复；`sechost.dll` 使用纯净 Wine 11.16 源码 |
 
 源码包包含新增认证服务的 IDL、构建定义和安装配置；它们不能仅靠最后的 `ntoskrnl` 源码目录获得。DXMT、MoltenVK 与其他第三方组件的源码、许可证和来源见仓库 `THIRD_PARTY.md`，不应误称为本 Wine 源码包的一部分。
 
@@ -21,16 +25,23 @@
 先校验下载的附件 SHA-256。以下脚本会在**新的输出目录**解压并校验完整源码，为所选模块应用对应变体，再构建到 `overlay/`。不会替换现有运行库或运行 Wine。
 
 ```bash
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz ntdll /输出路径/ntdll
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz ntoskrnl /输出路径/ntoskrnl
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz wineserver /输出路径/wineserver
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz winemac /输出路径/winemac
-bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.0-preview-source.tar.xz kernel32 /输出路径/kernel32
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz ntdll /输出路径/ntdll
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz ntoskrnl /输出路径/ntoskrnl
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz ntoskrnl-ace /输出路径/ntoskrnl-ace
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz ace-runtime /输出路径/ace-runtime
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz ace-runtime-v2 /输出路径/ace-runtime-v2
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz ace-runtime-v3 /输出路径/ace-runtime-v3
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz wineserver /输出路径/wineserver
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz winemac /输出路径/winemac
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz kernel32 /输出路径/kernel32
+bash tools/build-recovery-wine.sh /源码路径/Wine-11.16-Endfield-v0.4.2-private.3-source.tar.xz auth /输出路径/auth
 ```
 
-附加 `--check` 只做解压、完整源码校验及变体恢复，不要求编译器，也不会运行 Wine。归档已经包含聚合修改，**不要对 `wine/` 再次应用 `wine-11.16-recovery.patch`**；该补丁仅用于审阅或对固定的原始 Wine 11.16 压缩包应用。原始压缩包 SHA-256 为 `2b6d5cff784cb774f7f17b9a640b123ca8361d89c4280c0021b70bb6f3cd1b1c`。
+附加 `--check` 只做解压、完整源码校验、变体恢复和所选兼容补丁校验，不要求编译器，也不会运行 Wine。`ntoskrnl-ace` 保留早期三接口候选；`ace-runtime` 重建 private.1 运行版；`ace-runtime-v2` 再应用 IPI/IRQL 契约补丁；private.3 使用 `ace-runtime-v3`，最后应用 Tace 服务宿主收敛补丁，并输出 `ntoskrnl.exe`、`wineboot.exe` 和 `wine.inf`。归档已经包含聚合修改，**不要对 `wine/` 再次应用 `wine-11.16-recovery.patch`**；该补丁仅用于审阅或对固定的原始 Wine 11.16 压缩包应用。原始压缩包 SHA-256 为 `2b6d5cff784cb774f7f17b9a640b123ca8361d89c4280c0021b70bb6f3cd1b1c`。
 
-`auth` 构建还需要匹配 x86_64 运行库的 GnuTLS / FreeType 开发头文件、Vulkan-Headers 和库目录。按现有依赖位置设置 `GNUTLS_CFLAGS`、`GNUTLS_LIBS`、`FREETYPE_CFLAGS`、`FREETYPE_LIBS`、`CPPFLAGS`、`LDFLAGS` 后再传入 `auth`。这些是依赖路径，不是游戏或账号信息。构建输出保留当前二进制使用的模块布局。
+private.3 完整 ACE 私测构建的剥离前参考 SHA-256：`ntoskrnl.exe` 为 `c31782815f1d5ab37c7da936ec2295af9cd3c3b38d9cd9e09d0da6cd42580726`，`wineboot.exe` 为 `652087ba497444d0c028975fb837ac665f8c293cc6928adb5294c24b91cca5ae`，`wine.inf` 为 `d1248be104eeb27fed9c1ed3849f46e28768fed24da6e9d7c72fce450a9cd409`。发行脚本会把源码路径映射为等字节长的中性路径，删除 PE DWARF 与 Mach-O STABS，再对 Mach-O 签名。候选验证状态：通过。
+
+`auth` 构建还需要匹配 x86_64 运行库的 GnuTLS / FreeType 开发头文件、Vulkan-Headers 和库目录。按现有依赖位置设置 `GNUTLS_CFLAGS`、`GNUTLS_LIBS`、`FREETYPE_CFLAGS`、`FREETYPE_LIBS`、`CPPFLAGS`、`LDFLAGS` 后再传入 `auth`。这些是依赖路径，不是游戏或账号信息。输出包含 LSA/RPC 模块以及纯净 `sechost.dll`，不包含调查阶段的 `scmboundary` 日志通道。
 
 本版 `secur32.so` 的 GnuTLS 动态加载位置使用 `@loader_path/../../libgnutls.30.dylib`，加载安装包内的配套库。该改动属于构建配置，认证 C 源码不变；公开构建脚本采用相同的相对路径。历史调试构建的个人目录不应被照搬进发行包。`SOURCE-PROVENANCE.json` 记录模块 SHA-256、所用变体和构建记录；`MODULE-BUILD-RECORDS.json` 区分历史实际构建与本次相对路径重建。
 
